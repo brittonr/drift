@@ -223,12 +223,21 @@ impl MpdController {
             Some(50)
         };
 
+        // Parse playback modes from the status line
+        // Format: "volume: 50%   repeat: off   random: off   single: off   consume: off"
+        let repeat = status_str.contains("repeat: on");
+        let random = status_str.contains("random: on");
+        let single = status_str.contains("single: on");
+
         Ok(PlayerStatus {
             is_playing,
             current_track,
             volume,
             elapsed: None,
             duration: None,
+            repeat,
+            random,
+            single,
         })
     }
 
@@ -245,6 +254,137 @@ impl MpdController {
         } else {
             let error = String::from_utf8_lossy(&output.stderr);
             debug_log.push_back(format!("✗ Failed to set volume: {}", error));
+        }
+        Ok(())
+    }
+
+    pub async fn volume_up(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
+        debug_log.push_back("Executing: mpc volume +5".to_string());
+
+        let output = Command::new("mpc")
+            .arg("volume")
+            .arg("+5")
+            .output()?;
+
+        if output.status.success() {
+            debug_log.push_back("✓ Volume increased".to_string());
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to increase volume: {}", error));
+        }
+        Ok(())
+    }
+
+    pub async fn volume_down(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
+        debug_log.push_back("Executing: mpc volume -5".to_string());
+
+        let output = Command::new("mpc")
+            .arg("volume")
+            .arg("-5")
+            .output()?;
+
+        if output.status.success() {
+            debug_log.push_back("✓ Volume decreased".to_string());
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to decrease volume: {}", error));
+        }
+        Ok(())
+    }
+
+    pub async fn seek_forward(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
+        debug_log.push_back("Executing: mpc seek +10".to_string());
+
+        let output = Command::new("mpc")
+            .arg("seek")
+            .arg("+10")
+            .output()?;
+
+        if output.status.success() {
+            debug_log.push_back("✓ Seeked forward 10s".to_string());
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to seek: {}", error));
+        }
+        Ok(())
+    }
+
+    pub async fn seek_backward(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
+        debug_log.push_back("Executing: mpc seek -10".to_string());
+
+        let output = Command::new("mpc")
+            .arg("seek")
+            .arg("-10")
+            .output()?;
+
+        if output.status.success() {
+            debug_log.push_back("✓ Seeked backward 10s".to_string());
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to seek: {}", error));
+        }
+        Ok(())
+    }
+
+    pub async fn toggle_repeat(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
+        debug_log.push_back("Executing: mpc repeat".to_string());
+
+        let output = Command::new("mpc")
+            .arg("repeat")
+            .output()?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("On") {
+                debug_log.push_back("✓ Repeat enabled".to_string());
+            } else {
+                debug_log.push_back("✓ Repeat disabled".to_string());
+            }
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to toggle repeat: {}", error));
+        }
+        Ok(())
+    }
+
+    pub async fn toggle_random(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
+        debug_log.push_back("Executing: mpc random".to_string());
+
+        let output = Command::new("mpc")
+            .arg("random")
+            .output()?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("On") {
+                debug_log.push_back("✓ Random/shuffle enabled".to_string());
+            } else {
+                debug_log.push_back("✓ Random/shuffle disabled".to_string());
+            }
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to toggle random: {}", error));
+        }
+        Ok(())
+    }
+
+    pub async fn toggle_single(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
+        debug_log.push_back("Executing: mpc single".to_string());
+
+        let output = Command::new("mpc")
+            .arg("single")
+            .output()?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("On") {
+                debug_log.push_back("✓ Single track repeat enabled".to_string());
+            } else {
+                debug_log.push_back("✓ Single track repeat disabled".to_string());
+            }
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to toggle single: {}", error));
         }
         Ok(())
     }
@@ -360,21 +500,12 @@ impl MpdController {
             .args(&["current", "-f", "%artist%|||%title%|||%album%|||%time%"])
             .output()?;
 
-        if !output.status.success() {
-            eprintln!("DEBUG: mpc current command failed");
-            return Ok(None);
-        }
-
-        if output.stdout.is_empty() {
-            eprintln!("DEBUG: mpc current returned empty stdout");
+        if !output.status.success() || output.stdout.is_empty() {
             return Ok(None);
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        eprintln!("DEBUG: mpc current output: '{}'", stdout.trim());
-
         let parts: Vec<&str> = stdout.trim().split("|||").collect();
-        eprintln!("DEBUG: split into {} parts: {:?}", parts.len(), parts);
 
         if parts.len() >= 4 {
             // Get status for elapsed/duration
@@ -449,4 +580,7 @@ pub struct PlayerStatus {
     pub volume: Option<u8>,
     pub elapsed: Option<Duration>,
     pub duration: Option<Duration>,
+    pub repeat: bool,
+    pub random: bool,
+    pub single: bool,
 }

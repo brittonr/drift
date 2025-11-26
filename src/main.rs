@@ -62,6 +62,10 @@ struct App {
     local_queue: Vec<Track>,  // Store actual track metadata
     selected_queue_item: usize,
     show_queue: bool,
+    volume: u8,
+    repeat_mode: bool,
+    random_mode: bool,
+    single_mode: bool,
 
     // Core components
     tidal_client: TidalClient,
@@ -152,6 +156,10 @@ impl App {
             local_queue: Vec::new(),
             selected_queue_item: 0,
             show_queue: false,
+            volume: 100,
+            repeat_mode: false,
+            random_mode: false,
+            single_mode: false,
             tidal_client,
             mpd_controller,
             debug_log,
@@ -459,6 +467,14 @@ impl App {
             self.is_playing = status.is_playing;
             self.add_debug(format!("Playback state: {}", if self.is_playing { "playing" } else { "paused" }));
         }
+
+        // Update playback modes and volume
+        if let Some(vol) = status.volume {
+            self.volume = vol;
+        }
+        self.repeat_mode = status.repeat;
+        self.random_mode = status.random;
+        self.single_mode = status.single;
 
         // Update current song info from MPD status (elapsed/duration)
         // Since MPD plays raw URLs without metadata, we combine MPD timing info
@@ -916,6 +932,47 @@ async fn run_app<B: ratatui::backend::Backend>(
                         }
                     }
 
+                    // Volume controls
+                    KeyCode::Char('=') | KeyCode::Char('+') => {
+                        if let Err(e) = app.mpd_controller.volume_up(&mut app.debug_log).await {
+                            app.add_debug(format!("✗ Volume error: {}", e));
+                        }
+                    }
+                    KeyCode::Char('-') | KeyCode::Char('_') => {
+                        if let Err(e) = app.mpd_controller.volume_down(&mut app.debug_log).await {
+                            app.add_debug(format!("✗ Volume error: {}", e));
+                        }
+                    }
+
+                    // Seek controls
+                    KeyCode::Char('>') | KeyCode::Char('.') => {
+                        if let Err(e) = app.mpd_controller.seek_forward(&mut app.debug_log).await {
+                            app.add_debug(format!("✗ Seek error: {}", e));
+                        }
+                    }
+                    KeyCode::Char('<') | KeyCode::Char(',') => {
+                        if let Err(e) = app.mpd_controller.seek_backward(&mut app.debug_log).await {
+                            app.add_debug(format!("✗ Seek error: {}", e));
+                        }
+                    }
+
+                    // Playback mode toggles
+                    KeyCode::Char('r') => {
+                        if let Err(e) = app.mpd_controller.toggle_repeat(&mut app.debug_log).await {
+                            app.add_debug(format!("✗ Repeat toggle error: {}", e));
+                        }
+                    }
+                    KeyCode::Char('s') => {
+                        if let Err(e) = app.mpd_controller.toggle_random(&mut app.debug_log).await {
+                            app.add_debug(format!("✗ Shuffle toggle error: {}", e));
+                        }
+                    }
+                    KeyCode::Char('1') => {
+                        if let Err(e) = app.mpd_controller.toggle_single(&mut app.debug_log).await {
+                            app.add_debug(format!("✗ Single toggle error: {}", e));
+                        }
+                    }
+
                     _ => {}
                 }
             }
@@ -1082,16 +1139,14 @@ fn ui(f: &mut Frame, app: &App) {
             Span::raw(" | "),
             Span::styled("hjkl", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(": move | "),
-            Span::styled("gg/ge", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(": top/end | "),
-            Span::styled("y/Y", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(": add/all | "),
-            Span::styled("p", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(": play | "),
-            Span::styled("d/D", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(": del/clear | "),
-            Span::styled("w", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(": queue | "),
+            Span::styled("+/-", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(": vol | "),
+            Span::styled("</>", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(": seek | "),
+            Span::styled("r", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(": repeat | "),
+            Span::styled("s", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(": shuffle | "),
             Span::styled("Space", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(": cmd"),
         ]))
@@ -1203,16 +1258,35 @@ fn render_now_playing(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             Span::raw(format!(" ({}%)", (progress * 100.0) as u8)),
         ]));
 
-        // Queue info
+        // Queue and playback info
         let queue_info = if app.local_queue.len() > 1 {
-            format!("   {} tracks in queue", app.local_queue.len())
+            format!("{} tracks in queue", app.local_queue.len())
         } else if app.local_queue.len() == 1 {
-            "   1 track in queue".to_string()
+            "1 track in queue".to_string()
         } else {
-            "   No tracks in queue".to_string()
+            "No tracks in queue".to_string()
         };
+
+        // Playback modes
+        let mut modes = Vec::new();
+        if app.repeat_mode {
+            modes.push("repeat");
+        }
+        if app.single_mode {
+            modes.push("single");
+        }
+        if app.random_mode {
+            modes.push("shuffle");
+        }
+        let modes_str = if modes.is_empty() {
+            String::new()
+        } else {
+            format!(" | {}", modes.join(", "))
+        };
+
         lines.push(Line::from(vec![
-            Span::styled(queue_info, Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("   Vol: {}%  |  {}{}", app.volume, queue_info, modes_str),
+                Style::default().fg(Color::DarkGray)),
         ]));
 
     } else {
