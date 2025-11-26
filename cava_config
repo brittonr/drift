@@ -1,0 +1,24 @@
+# Cava config for Tidal TUI with MPD
+
+[general]
+bars = 20
+bar_width = 1
+bar_spacing = 0
+framerate = 30
+
+[input]
+method = pulse
+source = auto
+
+[output]
+method = raw
+raw_target = /dev/stdout
+data_format = binary
+bit_format = 8bit
+channels = mono
+
+[color]
+# Colors not used in raw output mode
+
+[smoothing]
+noise_reduction = 77
