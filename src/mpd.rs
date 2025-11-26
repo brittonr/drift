@@ -216,9 +216,12 @@ impl MpdController {
 
         // Parse volume if present
         let volume = if let Some(volume_line) = status_str.lines().find(|l| l.contains("volume:")) {
-            volume_line.split(':')
+            // Extract just the volume value (format: "volume: 65%   repeat: off...")
+            volume_line
+                .split("volume:")
                 .nth(1)
-                .and_then(|v| v.trim().trim_end_matches('%').parse::<u8>().ok())
+                .and_then(|s| s.trim().split_whitespace().next())
+                .and_then(|v| v.trim_end_matches('%').parse::<u8>().ok())
         } else {
             Some(50)
         };
