@@ -20,8 +20,8 @@ use crate::tidal::{Album, Artist, Playlist, SearchResults, TidalClient, Track};
 use crate::downloads::{DownloadEvent, DownloadManager};
 
 pub use state::{
-    AlbumDetailState, ArtistDetailState, BrowseState, ClickableAreas, DownloadsState,
-    HelpState, KeyState, LibraryState, PlaybackState, SearchState, ViewMode,
+    AlbumDetailState, ArtistDetailState, BrowseState, ClickableAreas, DialogMode, DialogState,
+    DownloadsState, HelpState, KeyState, LibraryState, PlaybackState, SearchState, ViewMode,
 };
 
 pub struct App {
@@ -88,6 +88,9 @@ pub struct App {
     // Help panel
     pub show_help: bool,
     pub help: HelpState,
+
+    // Playlist dialogs
+    pub dialog: DialogState,
 }
 
 impl App {
@@ -265,6 +268,7 @@ impl App {
             config,
             show_help: false,
             help: HelpState::default(),
+            dialog: DialogState::default(),
         })
     }
 
@@ -543,6 +547,215 @@ impl App {
                 Err(e) => {
                     self.add_debug(format!("Failed to record history: {}", e));
                 }
+            }
+        }
+    }
+
+    // ========== Playlist Management ==========
+
+    /// Open the "Create Playlist" dialog
+    pub fn open_create_playlist_dialog(&mut self) {
+        self.dialog.mode = DialogMode::CreatePlaylist;
+        self.dialog.input_text.clear();
+        self.add_debug("Create playlist dialog opened".to_string());
+    }
+
+    /// Open the "Add to Playlist" dialog for a given track
+    pub fn open_add_to_playlist_dialog(&mut self, track: &Track) {
+        self.dialog.mode = DialogMode::AddToPlaylist {
+            track_id: track.id,
+            track_title: track.title.clone(),
+        };
+        self.dialog.selected_index = 0;
+        self.add_debug(format!("Add to playlist dialog for: {}", track.title));
+    }
+
+    /// Open the "Rename Playlist" dialog
+    pub fn open_rename_playlist_dialog(&mut self, playlist: &Playlist) {
+        self.dialog.mode = DialogMode::RenamePlaylist {
+            playlist_id: playlist.id.clone(),
+            playlist_title: playlist.title.clone(),
+        };
+        self.dialog.input_text = playlist.title.clone();
+        self.add_debug(format!("Rename playlist dialog for: {}", playlist.title));
+    }
+
+    /// Open the "Delete Playlist" confirmation dialog
+    pub fn open_delete_playlist_dialog(&mut self, playlist: &Playlist) {
+        self.dialog.mode = DialogMode::ConfirmDeletePlaylist {
+            playlist_id: playlist.id.clone(),
+            playlist_title: playlist.title.clone(),
+        };
+        self.add_debug(format!("Delete playlist dialog for: {}", playlist.title));
+    }
+
+    /// Close any open dialog
+    pub fn close_dialog(&mut self) {
+        self.dialog.mode = DialogMode::None;
+        self.dialog.input_text.clear();
+        self.dialog.selected_index = 0;
+    }
+
+    /// Check if any dialog is open
+    pub fn is_dialog_open(&self) -> bool {
+        self.dialog.mode != DialogMode::None
+    }
+
+    /// Create a new playlist with the current input text
+    pub async fn create_playlist_from_dialog(&mut self) {
+        let name = self.dialog.input_text.trim().to_string();
+        if name.is_empty() {
+            self.add_debug("Playlist name cannot be empty".to_string());
+            return;
+        }
+
+        self.add_debug(format!("Creating playlist: {}", name));
+
+        match self.tidal_client.create_playlist(&name, None).await {
+            Ok(playlist) => {
+                self.add_debug(format!("Created playlist: {}", playlist.title));
+                self.playlists.insert(0, playlist);
+                self.close_dialog();
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to create playlist: {}", e));
+            }
+        }
+    }
+
+    /// Add a track to the selected playlist
+    pub async fn add_track_to_playlist_from_dialog(&mut self) {
+        let (track_id, playlist_id) = match &self.dialog.mode {
+            DialogMode::AddToPlaylist { track_id, .. } => {
+                if self.dialog.selected_index < self.playlists.len() {
+                    (*track_id, self.playlists[self.dialog.selected_index].id.clone())
+                } else {
+                    self.add_debug("No playlist selected".to_string());
+                    return;
+                }
+            }
+            _ => return,
+        };
+
+        let playlist_title = self.playlists[self.dialog.selected_index].title.clone();
+        self.add_debug(format!("Adding track to playlist: {}", playlist_title));
+
+        match self.tidal_client.add_tracks_to_playlist(&playlist_id, &[track_id]).await {
+            Ok(()) => {
+                self.add_debug(format!("Added track to '{}'", playlist_title));
+                // Update track count in local state
+                if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
+                    playlist.num_tracks += 1;
+                }
+                self.close_dialog();
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to add track: {}", e));
+            }
+        }
+    }
+
+    /// Rename the playlist with the current input text
+    pub async fn rename_playlist_from_dialog(&mut self) {
+        let (playlist_id, new_title) = match &self.dialog.mode {
+            DialogMode::RenamePlaylist { playlist_id, .. } => {
+                let title = self.dialog.input_text.trim().to_string();
+                if title.is_empty() {
+                    self.add_debug("Playlist name cannot be empty".to_string());
+                    return;
+                }
+                (playlist_id.clone(), title)
+            }
+            _ => return,
+        };
+
+        self.add_debug(format!("Renaming playlist to: {}", new_title));
+
+        match self.tidal_client.update_playlist(&playlist_id, Some(&new_title), None).await {
+            Ok(()) => {
+                self.add_debug(format!("Renamed playlist to: {}", new_title));
+                // Update local state
+                if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
+                    playlist.title = new_title;
+                }
+                self.close_dialog();
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to rename playlist: {}", e));
+            }
+        }
+    }
+
+    /// Delete the playlist after confirmation
+    pub async fn delete_playlist_from_dialog(&mut self) {
+        let (playlist_id, playlist_title) = match &self.dialog.mode {
+            DialogMode::ConfirmDeletePlaylist { playlist_id, playlist_title } => {
+                (playlist_id.clone(), playlist_title.clone())
+            }
+            _ => return,
+        };
+
+        self.add_debug(format!("Deleting playlist: {}", playlist_title));
+
+        match self.tidal_client.delete_playlist(&playlist_id).await {
+            Ok(()) => {
+                self.add_debug("Playlist deleted".to_string());
+                // Remove from local state
+                self.playlists.retain(|p| p.id != playlist_id);
+                // Reset selection if needed
+                if self.browse.selected_playlist >= self.playlists.len() && !self.playlists.is_empty() {
+                    self.browse.selected_playlist = self.playlists.len() - 1;
+                }
+                self.close_dialog();
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to delete playlist: {}", e));
+            }
+        }
+    }
+
+    /// Remove a track from the current playlist (when viewing tracks in browse mode)
+    pub async fn remove_track_from_current_playlist(&mut self) {
+        if self.view_mode != ViewMode::Browse || self.browse.selected_tab != 1 {
+            return;
+        }
+
+        if self.browse.selected_playlist >= self.playlists.len() {
+            return;
+        }
+
+        let playlist = &self.playlists[self.browse.selected_playlist];
+        if playlist.id.starts_with("demo-") {
+            self.add_debug("Cannot modify demo playlists".to_string());
+            return;
+        }
+
+        if self.browse.selected_track >= self.tracks.len() {
+            return;
+        }
+
+        let playlist_id = playlist.id.clone();
+        let track_index = self.browse.selected_track;
+        let track_title = self.tracks[track_index].title.clone();
+
+        self.add_debug(format!("Removing '{}' from playlist", track_title));
+
+        match self.tidal_client.remove_tracks_from_playlist(&playlist_id, &[track_index]).await {
+            Ok(()) => {
+                self.add_debug(format!("Removed '{}' from playlist", track_title));
+                // Remove from local state
+                self.tracks.remove(track_index);
+                // Update playlist track count
+                if let Some(p) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
+                    p.num_tracks = p.num_tracks.saturating_sub(1);
+                }
+                // Adjust selection if needed
+                if self.browse.selected_track >= self.tracks.len() && !self.tracks.is_empty() {
+                    self.browse.selected_track = self.tracks.len() - 1;
+                }
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to remove track: {}", e));
             }
         }
     }

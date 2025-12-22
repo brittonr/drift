@@ -186,6 +186,27 @@ pub const KEYBINDING_CATEGORIES: &[KeybindingCategory] = &[
         ],
     },
     KeybindingCategory {
+        name: "Playlists",
+        bindings: &[
+            Keybinding {
+                keys: "C",
+                description: "Create new playlist",
+            },
+            Keybinding {
+                keys: "a",
+                description: "Add track to playlist",
+            },
+            Keybinding {
+                keys: "e (Browse)",
+                description: "Rename playlist",
+            },
+            Keybinding {
+                keys: "X (Browse)",
+                description: "Delete playlist / remove track",
+            },
+        ],
+    },
+    KeybindingCategory {
         name: "System",
         bindings: &[
             Keybinding {

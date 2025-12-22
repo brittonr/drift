@@ -32,6 +32,7 @@ use ui::{
     render_now_playing, render_visualizer, render_queue, render_browse_view,
     render_search_view, render_downloads_view, render_library_view, render_status_bar,
     render_artist_detail_view, render_album_detail_view, render_help_panel, HelpPanelState,
+    render_dialog, DialogRenderState,
 };
 
 #[tokio::main]
@@ -267,6 +268,17 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             scroll_offset: app.help.scroll_offset,
         };
         render_help_panel(f, &help_state, f.area());
+    }
+
+    // Render dialog as topmost overlay
+    if app.is_dialog_open() {
+        let dialog_state = DialogRenderState {
+            mode: &app.dialog.mode,
+            input_text: &app.dialog.input_text,
+            selected_index: app.dialog.selected_index,
+            playlists: &app.playlists,
+        };
+        render_dialog(f, &dialog_state, f.area());
     }
 }
 

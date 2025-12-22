@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{App, ViewMode};
+use crate::app::{App, DialogMode, ViewMode};
 use crate::app::state::RadioSeed;
 use crate::ui::library::LibraryTab;
 use crate::ui::search::SearchTab;
@@ -12,6 +12,11 @@ pub enum KeyAction {
 }
 
 pub async fn handle_key_event(app: &mut App, key: KeyEvent) -> KeyAction {
+    // Handle dialogs first (highest priority)
+    if app.is_dialog_open() {
+        return handle_dialog_input(app, key).await;
+    }
+
     // Handle help panel - any key dismisses it (except j/k for scrolling)
     if app.show_help {
         match key.code {
@@ -50,6 +55,77 @@ pub async fn handle_key_event(app: &mut App, key: KeyEvent) -> KeyAction {
 
     // Main helix-style commands
     handle_normal_mode(app, key).await
+}
+
+async fn handle_dialog_input(app: &mut App, key: KeyEvent) -> KeyAction {
+    match &app.dialog.mode {
+        DialogMode::None => {}
+
+        DialogMode::CreatePlaylist | DialogMode::RenamePlaylist { .. } => {
+            // Text input mode
+            match key.code {
+                KeyCode::Enter => {
+                    match &app.dialog.mode {
+                        DialogMode::CreatePlaylist => {
+                            app.create_playlist_from_dialog().await;
+                        }
+                        DialogMode::RenamePlaylist { .. } => {
+                            app.rename_playlist_from_dialog().await;
+                        }
+                        _ => {}
+                    }
+                }
+                KeyCode::Esc => {
+                    app.close_dialog();
+                }
+                KeyCode::Backspace => {
+                    app.dialog.input_text.pop();
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.dialog.input_text.push(c);
+                }
+                _ => {}
+            }
+        }
+
+        DialogMode::AddToPlaylist { .. } => {
+            // Playlist selection mode
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if app.dialog.selected_index < app.playlists.len().saturating_sub(1) {
+                        app.dialog.selected_index += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if app.dialog.selected_index > 0 {
+                        app.dialog.selected_index -= 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    app.add_track_to_playlist_from_dialog().await;
+                }
+                KeyCode::Esc => {
+                    app.close_dialog();
+                }
+                _ => {}
+            }
+        }
+
+        DialogMode::ConfirmDeletePlaylist { .. } => {
+            // Confirmation mode
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    app.delete_playlist_from_dialog().await;
+                }
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    app.close_dialog();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    KeyAction::Continue
 }
 
 async fn handle_search_input(app: &mut App, key: KeyEvent) -> KeyAction {
@@ -475,10 +551,108 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             app.help.scroll_offset = 0;
         }
 
+        // C: create new playlist
+        KeyCode::Char('C') => {
+            app.open_create_playlist_dialog();
+        }
+
+        // a: add track to playlist
+        KeyCode::Char('a') => {
+            handle_add_to_playlist(app);
+        }
+
+        // e: rename/edit playlist (when on playlists panel)
+        KeyCode::Char('e') => {
+            if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 0 {
+                if app.browse.selected_playlist < app.playlists.len() {
+                    let playlist = app.playlists[app.browse.selected_playlist].clone();
+                    if playlist.id.starts_with("demo-") {
+                        app.add_debug("Cannot rename demo playlists".to_string());
+                    } else {
+                        app.open_rename_playlist_dialog(&playlist);
+                    }
+                }
+            }
+        }
+
+        // X: delete playlist (when on playlists panel) or remove track from playlist (when on tracks panel)
+        KeyCode::Char('X') => {
+            if app.view_mode == ViewMode::Browse {
+                if app.browse.selected_tab == 0 {
+                    // Delete playlist
+                    if app.browse.selected_playlist < app.playlists.len() {
+                        let playlist = app.playlists[app.browse.selected_playlist].clone();
+                        if playlist.id.starts_with("demo-") {
+                            app.add_debug("Cannot delete demo playlists".to_string());
+                        } else {
+                            app.open_delete_playlist_dialog(&playlist);
+                        }
+                    }
+                } else if app.browse.selected_tab == 1 {
+                    // Remove track from current playlist
+                    app.remove_track_from_current_playlist().await;
+                }
+            }
+        }
+
         _ => {}
     }
 
     KeyAction::Continue
+}
+
+fn handle_add_to_playlist(app: &mut App) {
+    // Find the track to add based on current view/context
+    let track = match app.view_mode {
+        ViewMode::Browse => {
+            if app.browse.selected_tab == 1 && app.browse.selected_track < app.tracks.len() {
+                Some(app.tracks[app.browse.selected_track].clone())
+            } else {
+                None
+            }
+        }
+        ViewMode::Search => {
+            if let Some(ref results) = app.search_results {
+                if app.search.tab == SearchTab::Tracks && app.search.selected_track < results.tracks.len() {
+                    Some(results.tracks[app.search.selected_track].clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        ViewMode::Library => {
+            if app.library.tab == LibraryTab::Tracks && app.library.selected_track < app.favorite_tracks.len() {
+                Some(app.favorite_tracks[app.library.selected_track].clone())
+            } else if app.library.tab == LibraryTab::History && app.library.selected_history < app.history_entries.len() {
+                Some(crate::tidal::Track::from(&app.history_entries[app.library.selected_history]))
+            } else {
+                None
+            }
+        }
+        ViewMode::ArtistDetail => {
+            if app.artist_detail.selected_panel == 0 && app.artist_detail.selected_track < app.artist_detail.top_tracks.len() {
+                Some(app.artist_detail.top_tracks[app.artist_detail.selected_track].clone())
+            } else {
+                None
+            }
+        }
+        ViewMode::AlbumDetail => {
+            if app.album_detail.selected_track < app.album_detail.tracks.len() {
+                Some(app.album_detail.tracks[app.album_detail.selected_track].clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    if let Some(track) = track {
+        app.open_add_to_playlist_dialog(&track);
+    } else {
+        app.add_debug("No track selected to add to playlist".to_string());
+    }
 }
 
 async fn handle_enter(app: &mut App) {

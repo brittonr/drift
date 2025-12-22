@@ -146,3 +146,41 @@ pub struct AlbumDetailState {
 pub struct HelpState {
     pub scroll_offset: usize,
 }
+
+/// Dialog mode for text input and playlist selection
+#[derive(Clone, PartialEq)]
+pub enum DialogMode {
+    /// Not showing any dialog
+    None,
+    /// Creating a new playlist - text input for name
+    CreatePlaylist,
+    /// Adding a track to a playlist - selecting which playlist
+    AddToPlaylist {
+        track_id: u64,
+        track_title: String,
+    },
+    /// Renaming a playlist - text input for new name
+    RenamePlaylist {
+        playlist_id: String,
+        playlist_title: String,
+    },
+    /// Confirming playlist deletion
+    ConfirmDeletePlaylist {
+        playlist_id: String,
+        playlist_title: String,
+    },
+}
+
+impl Default for DialogMode {
+    fn default() -> Self {
+        DialogMode::None
+    }
+}
+
+/// State for dialog inputs
+#[derive(Default)]
+pub struct DialogState {
+    pub mode: DialogMode,
+    pub input_text: String,
+    pub selected_index: usize,
+}

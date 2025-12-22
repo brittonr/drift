@@ -1455,6 +1455,280 @@ impl TidalClient {
         Ok(vec![])
     }
 
+    // ========== Playlist Management ==========
+
+    /// Create a new playlist
+    /// Uses the v2 API: PUT my-collection/playlists/folders/create-playlist
+    pub async fn create_playlist(&mut self, name: &str, description: Option<&str>) -> Result<Playlist> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = "https://api.tidal.com/v2/my-collection/playlists/folders/create-playlist";
+
+                let mut query_params = vec![
+                    ("name", name.to_string()),
+                    ("folderId", "root".to_string()),
+                ];
+                if let Some(desc) = description {
+                    query_params.push(("description", desc.to_string()));
+                }
+
+                let response = self.http_client
+                    .put(url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&query_params)
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        let json: Value = resp.json().await?;
+
+                        // Response structure: { "data": { "uuid": "...", "title": "...", ... } }
+                        let data = json.get("data").ok_or_else(|| anyhow!("Missing data field"))?;
+
+                        let uuid = data.get("uuid")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| anyhow!("Missing uuid"))?
+                            .to_string();
+
+                        let title = data.get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(name)
+                            .to_string();
+
+                        let description = data.get("description")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        let num_tracks = data.get("numberOfTracks")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as usize;
+
+                        return Ok(Playlist {
+                            id: uuid,
+                            title,
+                            description,
+                            num_tracks,
+                        });
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(anyhow!("Failed to create playlist: {} - {}", status, body));
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Network error creating playlist: {}", e));
+                    }
+                }
+            }
+            break;
+        }
+
+        Err(anyhow!("No configuration available"))
+    }
+
+    /// Add tracks to a playlist
+    /// POST playlists/{playlist_id}/items with trackIds in form data
+    pub async fn add_tracks_to_playlist(&mut self, playlist_id: &str, track_ids: &[u64]) -> Result<()> {
+        if track_ids.is_empty() {
+            return Ok(());
+        }
+
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!("https://api.tidal.com/v1/playlists/{}/items", playlist_id);
+
+                let track_ids_str = track_ids
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+
+                let response = self.http_client
+                    .post(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US")])
+                    .form(&[
+                        ("trackIds", track_ids_str.as_str()),
+                        ("onArtifactNotFound", "SKIP"),
+                        ("onDupes", "ADD"),
+                    ])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 || resp.status().as_u16() == 201 => {
+                        return Ok(());
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(anyhow!("Failed to add tracks to playlist: {} - {}", status, body));
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Network error adding tracks: {}", e));
+                    }
+                }
+            }
+            break;
+        }
+
+        Err(anyhow!("No configuration available"))
+    }
+
+    /// Remove tracks from a playlist by their indices (0-based positions)
+    /// DELETE playlists/{playlist_id}/items/{indices}
+    pub async fn remove_tracks_from_playlist(&mut self, playlist_id: &str, indices: &[usize]) -> Result<()> {
+        if indices.is_empty() {
+            return Ok(());
+        }
+
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let indices_str = indices
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+
+                let url = format!(
+                    "https://api.tidal.com/v1/playlists/{}/items/{}",
+                    playlist_id, indices_str
+                );
+
+                let response = self.http_client
+                    .delete(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US")])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 || resp.status().as_u16() == 204 => {
+                        return Ok(());
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(anyhow!("Failed to remove tracks: {} - {}", status, body));
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Network error removing tracks: {}", e));
+                    }
+                }
+            }
+            break;
+        }
+
+        Err(anyhow!("No configuration available"))
+    }
+
+    /// Delete a playlist
+    /// DELETE playlists/{playlist_id}
+    pub async fn delete_playlist(&mut self, playlist_id: &str) -> Result<()> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!("https://api.tidal.com/v1/playlists/{}", playlist_id);
+
+                let response = self.http_client
+                    .delete(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 || resp.status().as_u16() == 204 => {
+                        return Ok(());
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(anyhow!("Failed to delete playlist: {} - {}", status, body));
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Network error deleting playlist: {}", e));
+                    }
+                }
+            }
+            break;
+        }
+
+        Err(anyhow!("No configuration available"))
+    }
+
+    /// Rename/update a playlist
+    /// POST playlists/{playlist_id} with title and/or description
+    pub async fn update_playlist(&mut self, playlist_id: &str, title: Option<&str>, description: Option<&str>) -> Result<()> {
+        if title.is_none() && description.is_none() {
+            return Ok(());
+        }
+
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!("https://api.tidal.com/v1/playlists/{}", playlist_id);
+
+                let mut form_params: Vec<(&str, &str)> = Vec::new();
+                if let Some(t) = title {
+                    form_params.push(("title", t));
+                }
+                if let Some(d) = description {
+                    form_params.push(("description", d));
+                }
+
+                let response = self.http_client
+                    .post(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .form(&form_params)
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 => {
+                        return Ok(());
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(anyhow!("Failed to update playlist: {} - {}", status, body));
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Network error updating playlist: {}", e));
+                    }
+                }
+            }
+            break;
+        }
+
+        Err(anyhow!("No configuration available"))
+    }
+
+    // ========== End Playlist Management ==========
+
     /// Get albums for an artist (discography)
     pub async fn get_artist_albums(&mut self, artist_id: u64) -> Result<Vec<Album>> {
         for attempt in 0..2 {
