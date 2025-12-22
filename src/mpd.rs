@@ -34,38 +34,58 @@ fn parse_duration(time_str: &str) -> Duration {
 
 pub struct MpdController {
     _is_connected: bool,
+    host: String,
+    port: u16,
 }
 
 impl MpdController {
     pub async fn new(debug_log: &mut VecDeque<String>) -> Result<Self> {
+        Self::with_config("localhost", 6600, debug_log).await
+    }
+
+    pub async fn with_config(host: &str, port: u16, debug_log: &mut VecDeque<String>) -> Result<Self> {
         // Check if MPD is running
         let output = Command::new("mpc")
+            .arg("-h")
+            .arg(host)
+            .arg("-p")
+            .arg(port.to_string())
             .arg("status")
             .output()?;
 
         let is_connected = output.status.success();
         if is_connected {
-            debug_log.push_back("✓ Connected to MPD".to_string());
+            debug_log.push_back(format!("✓ Connected to MPD at {}:{}", host, port));
             let status_str = String::from_utf8_lossy(&output.stdout);
             for line in status_str.lines().take(2) {
                 debug_log.push_back(format!("  {}", line));
             }
         } else {
-            debug_log.push_back("✗ Could not connect to MPD".to_string());
+            debug_log.push_back(format!("✗ Could not connect to MPD at {}:{}", host, port));
             let error = String::from_utf8_lossy(&output.stderr);
             debug_log.push_back(format!("  Error: {}", error));
         }
 
         Ok(Self {
             _is_connected: is_connected,
+            host: host.to_string(),
+            port,
         })
+    }
+
+    /// Build mpc command with host/port args
+    fn mpc_cmd(&self) -> Command {
+        let mut cmd = Command::new("mpc");
+        cmd.arg("-h").arg(&self.host);
+        cmd.arg("-p").arg(self.port.to_string());
+        cmd
     }
 
 
     pub async fn add_track(&mut self, url: &str, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back(format!("Executing: mpc add \"{}\"", &url[..100.min(url.len())]));
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("add")
             .arg(url)
             .output()?;
@@ -95,7 +115,7 @@ impl MpdController {
     pub async fn play(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc play".to_string());
 
-        let output = Command::new("mpc").arg("play").output()?;
+        let output = self.mpc_cmd().arg("play").output()?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -121,7 +141,7 @@ impl MpdController {
         let pos = position + 1;
         debug_log.push_back(format!("Executing: mpc play {}", pos));
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("play")
             .arg(pos.to_string())
             .output()?;
@@ -142,7 +162,7 @@ impl MpdController {
     pub async fn pause(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc pause".to_string());
 
-        let output = Command::new("mpc").arg("pause").output()?;
+        let output = self.mpc_cmd().arg("pause").output()?;
 
         if output.status.success() {
             debug_log.push_back("✓ Playback paused".to_string());
@@ -156,7 +176,7 @@ impl MpdController {
     pub async fn stop(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc stop".to_string());
 
-        let output = Command::new("mpc").arg("stop").output()?;
+        let output = self.mpc_cmd().arg("stop").output()?;
 
         if output.status.success() {
             debug_log.push_back("✓ Playback stopped".to_string());
@@ -170,7 +190,7 @@ impl MpdController {
     pub async fn next(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc next".to_string());
 
-        let output = Command::new("mpc").arg("next").output()?;
+        let output = self.mpc_cmd().arg("next").output()?;
 
         if output.status.success() {
             debug_log.push_back("✓ Skipped to next track".to_string());
@@ -188,7 +208,7 @@ impl MpdController {
     pub async fn previous(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc prev".to_string());
 
-        let output = Command::new("mpc").arg("prev").output()?;
+        let output = self.mpc_cmd().arg("prev").output()?;
 
         if output.status.success() {
             debug_log.push_back("✓ Went to previous track".to_string());
@@ -204,7 +224,7 @@ impl MpdController {
     }
 
     pub async fn get_status(&mut self, _debug_log: &mut VecDeque<String>) -> Result<PlayerStatus> {
-        let output = Command::new("mpc").arg("status").output()?;
+        let output = self.mpc_cmd().arg("status").output()?;
         let status_str = String::from_utf8_lossy(&output.stdout);
 
         let is_playing = status_str.contains("[playing]");
@@ -247,7 +267,7 @@ impl MpdController {
     pub async fn set_volume(&mut self, volume: u8, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back(format!("Executing: mpc volume {}", volume));
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("volume")
             .arg(volume.to_string())
             .output()?;
@@ -264,7 +284,7 @@ impl MpdController {
     pub async fn volume_up(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc volume +5".to_string());
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("volume")
             .arg("+5")
             .output()?;
@@ -281,7 +301,7 @@ impl MpdController {
     pub async fn volume_down(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc volume -5".to_string());
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("volume")
             .arg("-5")
             .output()?;
@@ -298,7 +318,7 @@ impl MpdController {
     pub async fn seek_forward(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc seek +10".to_string());
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("seek")
             .arg("+10")
             .output()?;
@@ -315,7 +335,7 @@ impl MpdController {
     pub async fn seek_backward(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc seek -10".to_string());
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("seek")
             .arg("-10")
             .output()?;
@@ -332,7 +352,7 @@ impl MpdController {
     pub async fn seek_to(&mut self, seconds: u32, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back(format!("Executing: mpc seek {}", seconds));
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("seek")
             .arg(seconds.to_string())
             .output()?;
@@ -349,7 +369,7 @@ impl MpdController {
     pub async fn toggle_repeat(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc repeat".to_string());
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("repeat")
             .output()?;
 
@@ -370,7 +390,7 @@ impl MpdController {
     pub async fn toggle_random(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc random".to_string());
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("random")
             .output()?;
 
@@ -391,7 +411,7 @@ impl MpdController {
     pub async fn toggle_single(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc single".to_string());
 
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("single")
             .output()?;
 
@@ -413,7 +433,7 @@ impl MpdController {
     pub async fn debug_queue(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Checking MPD queue...".to_string());
 
-        let output = Command::new("mpc").arg("playlist").output()?;
+        let output = self.mpc_cmd().arg("playlist").output()?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -431,7 +451,7 @@ impl MpdController {
     // Get the current queue
     pub async fn get_queue(&mut self) -> Result<Vec<QueueItem>> {
         // First try to get with metadata
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .args(&["playlist", "-f", "%artist%|||%title%|||%album%|||%time%"])
             .output()?;
 
@@ -459,7 +479,7 @@ impl MpdController {
         }
 
         // No metadata available, just get the raw playlist
-        let output = Command::new("mpc").arg("playlist").output()?;
+        let output = self.mpc_cmd().arg("playlist").output()?;
         if !output.status.success() {
             return Ok(Vec::new());
         }
@@ -490,7 +510,7 @@ impl MpdController {
 
     // Get just timing info (elapsed/duration) from MPD status
     pub async fn get_timing_info(&mut self) -> Result<(Duration, Duration)> {
-        let status_output = Command::new("mpc").arg("status").output()?;
+        let status_output = self.mpc_cmd().arg("status").output()?;
         let status_str = String::from_utf8_lossy(&status_output.stdout);
 
         let mut elapsed = Duration::from_secs(0);
@@ -517,7 +537,7 @@ impl MpdController {
     /// Get current queue position (0-indexed) and elapsed time
     /// Returns (position, elapsed_seconds) or None if not playing
     pub async fn get_playback_position(&mut self) -> Result<Option<(usize, u32)>> {
-        let status_output = Command::new("mpc").arg("status").output()?;
+        let status_output = self.mpc_cmd().arg("status").output()?;
         let status_str = String::from_utf8_lossy(&status_output.stdout);
 
         // Format: "[playing] #1/5   0:45/3:20 (22%)"
@@ -548,7 +568,7 @@ impl MpdController {
 
     // Get detailed current playing info
     pub async fn get_current_song(&mut self) -> Result<Option<CurrentSong>> {
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .args(&["current", "-f", "%artist%|||%title%|||%album%|||%time%"])
             .output()?;
 
@@ -561,7 +581,7 @@ impl MpdController {
 
         if parts.len() >= 4 {
             // Get status for elapsed/duration
-            let status_output = Command::new("mpc").arg("status").output()?;
+            let status_output = self.mpc_cmd().arg("status").output()?;
             let status_str = String::from_utf8_lossy(&status_output.stdout);
 
             let mut elapsed = Duration::from_secs(0);
@@ -595,7 +615,7 @@ impl MpdController {
 
     // Clear the queue
     pub async fn clear_queue(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
-        let output = Command::new("mpc").arg("clear").output()?;
+        let output = self.mpc_cmd().arg("clear").output()?;
 
         if output.status.success() {
             debug_log.push_back("✓ Queue cleared".to_string());
@@ -609,7 +629,7 @@ impl MpdController {
 
     // Remove track from queue by position
     pub async fn remove_from_queue(&mut self, position: usize, debug_log: &mut VecDeque<String>) -> Result<()> {
-        let output = Command::new("mpc")
+        let output = self.mpc_cmd()
             .arg("del")
             .arg(position.to_string())
             .output()?;

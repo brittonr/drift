@@ -7,10 +7,11 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
 
+use crate::config::DownloadsConfig;
 use crate::download_db::{DownloadDb, DownloadRecord, SyncedPlaylist};
 use crate::tidal::{Playlist, TidalClient, Track};
 
-const MAX_CONCURRENT_DOWNLOADS: usize = 2;
+const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 2;
 
 #[derive(Debug, Clone)]
 pub enum DownloadEvent {
@@ -32,13 +33,23 @@ pub struct DownloadManager {
 
 impl DownloadManager {
     pub fn new() -> Result<(Self, mpsc::UnboundedReceiver<DownloadEvent>)> {
-        let download_dir = Self::get_download_dir()?;
+        Self::with_config(&DownloadsConfig::default())
+    }
+
+    pub fn with_config(config: &DownloadsConfig) -> Result<(Self, mpsc::UnboundedReceiver<DownloadEvent>)> {
+        let download_dir = Self::get_download_dir(config)?;
         let (event_tx, event_rx) = mpsc::unbounded_channel();
+
+        let max_concurrent = if config.max_concurrent > 0 {
+            config.max_concurrent
+        } else {
+            DEFAULT_MAX_CONCURRENT_DOWNLOADS
+        };
 
         let manager = Self {
             db: DownloadDb::new()?,
             download_dir,
-            semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS)),
+            semaphore: Arc::new(Semaphore::new(max_concurrent)),
             event_tx,
             is_paused: false,
         };
@@ -46,14 +57,20 @@ impl DownloadManager {
         Ok((manager, event_rx))
     }
 
-    fn get_download_dir() -> Result<PathBuf> {
-        let cache_dir = dirs::cache_dir()
-            .context("Failed to get cache directory")?
-            .join("tidal-tui")
-            .join("downloads");
-        std::fs::create_dir_all(&cache_dir)
+    fn get_download_dir(config: &DownloadsConfig) -> Result<PathBuf> {
+        // Use custom download dir if specified, otherwise use cache dir
+        let download_dir = if let Some(ref custom_dir) = config.download_dir {
+            PathBuf::from(custom_dir)
+        } else {
+            dirs::cache_dir()
+                .context("Failed to get cache directory")?
+                .join("tidal-tui")
+                .join("downloads")
+        };
+
+        std::fs::create_dir_all(&download_dir)
             .context("Failed to create downloads directory")?;
-        Ok(cache_dir)
+        Ok(download_dir)
     }
 
     pub fn queue_track(&self, track: &Track) -> Result<()> {

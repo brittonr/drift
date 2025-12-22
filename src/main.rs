@@ -25,6 +25,7 @@ use std::{io, time::Duration, collections::VecDeque};
 use tidal::{TidalClient, Playlist, Track, SearchResults};
 use mpd::MpdController;
 use cava::CavaVisualizer;
+use config::Config;
 
 #[derive(PartialEq, Clone, Copy)]
 enum ViewMode {
@@ -124,12 +125,29 @@ struct App {
     selected_favorite_album: usize,
     selected_favorite_artist: usize,
     favorites_loaded: bool,
+
+    // Configuration
+    config: Config,
 }
 
 impl App {
     async fn new() -> Result<Self> {
         let mut debug_log = VecDeque::new();
         debug_log.push_back("Starting Tidal TUI...".to_string());
+
+        // Load configuration
+        let config = match Config::load() {
+            Ok(cfg) => {
+                debug_log.push_back("✓ Configuration loaded".to_string());
+                debug_log.push_back(format!("  MPD: {}:{}", cfg.mpd.host, cfg.mpd.port));
+                debug_log.push_back(format!("  Audio quality: {}", cfg.playback.audio_quality));
+                cfg
+            }
+            Err(e) => {
+                debug_log.push_back(format!("⚠ Failed to load config: {}, using defaults", e));
+                Config::default()
+            }
+        };
 
         // Initialize Tidal client
         debug_log.push_back("Initializing Tidal client...".to_string());
@@ -141,9 +159,13 @@ impl App {
             debug_log.push_back("⚠ No Tidal credentials - demo mode".to_string());
         }
 
-        // Initialize MPD controller
+        // Initialize MPD controller with config
         debug_log.push_back("Connecting to MPD...".to_string());
-        let mpd_controller = MpdController::new(&mut debug_log).await?;
+        let mpd_controller = MpdController::with_config(
+            &config.mpd.host,
+            config.mpd.port,
+            &mut debug_log
+        ).await?;
 
         // Load initial playlists (will auto-refresh token if needed)
         debug_log.push_back("Fetching playlists...".to_string());
@@ -160,54 +182,65 @@ impl App {
             Vec::new()
         };
 
-        // Try to initialize visualizer
-        let mut visualizer = match CavaVisualizer::new() {
-            Ok(mut v) => {
-                debug_log.push_back("✓ Visualizer initialized".to_string());
-                // Start the cava process
-                match v.start() {
-                    Ok(_) => {
-                        debug_log.push_back("✓ Cava process started".to_string());
-                        Some(v)
-                    }
-                    Err(e) => {
-                        debug_log.push_back(format!("⚠ Could not start cava: {}", e));
-                        None
+        // Try to initialize visualizer (only if enabled in config)
+        let visualizer = if config.ui.show_visualizer {
+            match CavaVisualizer::new() {
+                Ok(mut v) => {
+                    debug_log.push_back("✓ Visualizer initialized".to_string());
+                    // Start the cava process
+                    match v.start() {
+                        Ok(_) => {
+                            debug_log.push_back("✓ Cava process started".to_string());
+                            Some(v)
+                        }
+                        Err(e) => {
+                            debug_log.push_back(format!("⚠ Could not start cava: {}", e));
+                            None
+                        }
                     }
                 }
+                Err(e) => {
+                    debug_log.push_back(format!("⚠ Could not initialize visualizer: {}", e));
+                    None
+                }
             }
-            Err(e) => {
-                debug_log.push_back(format!("⚠ Could not initialize visualizer: {}", e));
-                None
-            }
+        } else {
+            debug_log.push_back("Visualizer disabled in config".to_string());
+            None
         };
 
         // Initialize album art cache
         let album_art_cache = album_art::AlbumArtCache::new()?;
         debug_log.push_back("✓ Album art cache initialized".to_string());
 
-        // Load persisted queue
-        let (local_queue, pending_restore) = match queue_persistence::load_queue() {
-            Ok(Some(persisted)) => {
-                debug_log.push_back(format!("Found {} tracks in saved queue", persisted.tracks.len()));
-                let tracks: Vec<Track> = persisted.tracks.iter().map(Track::from).collect();
-                (tracks, Some(persisted))
+        // Load persisted queue (only if resume_on_startup is enabled)
+        let (local_queue, pending_restore) = if config.playback.resume_on_startup {
+            match queue_persistence::load_queue() {
+                Ok(Some(persisted)) => {
+                    debug_log.push_back(format!("Found {} tracks in saved queue", persisted.tracks.len()));
+                    let tracks: Vec<Track> = persisted.tracks.iter().map(Track::from).collect();
+                    (tracks, Some(persisted))
+                }
+                Ok(None) => {
+                    debug_log.push_back("No saved queue found".to_string());
+                    (Vec::new(), None)
+                }
+                Err(e) => {
+                    debug_log.push_back(format!("Failed to load queue: {}", e));
+                    (Vec::new(), None)
+                }
             }
-            Ok(None) => {
-                debug_log.push_back("No saved queue found".to_string());
-                (Vec::new(), None)
-            }
-            Err(e) => {
-                debug_log.push_back(format!("Failed to load queue: {}", e));
-                (Vec::new(), None)
-            }
+        } else {
+            debug_log.push_back("Queue resume disabled in config".to_string());
+            (Vec::new(), None)
         };
 
-        // Initialize download manager
-        let (download_manager, download_event_rx, download_records) = match downloads::DownloadManager::new() {
+        // Initialize download manager with config
+        let (download_manager, download_event_rx, download_records) = match downloads::DownloadManager::with_config(&config.downloads) {
             Ok((dm, rx)) => {
                 let records = dm.get_all_downloads().unwrap_or_default();
-                debug_log.push_back(format!("✓ Download manager initialized ({} downloads)", records.len()));
+                debug_log.push_back(format!("✓ Download manager initialized ({} downloads, max {})",
+                    records.len(), config.downloads.max_concurrent));
                 (Some(dm), Some(rx), records)
             }
             Err(e) => {
@@ -237,7 +270,7 @@ impl App {
             local_queue,
             selected_queue_item: 0,
             show_queue: false,
-            volume: 100,
+            volume: config.playback.default_volume,
             repeat_mode: false,
             random_mode: false,
             single_mode: false,
@@ -245,7 +278,7 @@ impl App {
             mpd_controller,
             debug_log,
             visualizer,
-            show_visualizer: true,
+            show_visualizer: config.ui.show_visualizer,
             album_art_cache,
             pending_key: None,
             space_pressed: false,
@@ -265,6 +298,7 @@ impl App {
             selected_favorite_album: 0,
             selected_favorite_artist: 0,
             favorites_loaded: false,
+            config,
         })
     }
 
