@@ -205,6 +205,45 @@ impl App {
                     }
                 }
             }
+            RadioSeed::Artist(artist_id) => {
+                self.add_debug(format!("Artist Radio: fetching similar tracks (artist: {})", artist_id));
+                match self.tidal_client.get_artist_radio(artist_id, 10).await {
+                    Ok(tracks) => tracks,
+                    Err(e) => {
+                        self.add_debug(format!("Artist Radio: failed to fetch tracks: {}", e));
+                        self.playback.radio_fetching = false;
+                        return;
+                    }
+                }
+            }
+            RadioSeed::Album(album_id) => {
+                self.add_debug(format!("Album Radio: fetching similar tracks (album: {})", album_id));
+                // Album radio fallback: get album tracks, seed from random track
+                let album_tracks = match self.tidal_client.get_album_tracks(&album_id).await {
+                    Ok(tracks) => tracks,
+                    Err(e) => {
+                        self.add_debug(format!("Album Radio: failed to get album tracks: {}", e));
+                        self.playback.radio_fetching = false;
+                        return;
+                    }
+                };
+                if album_tracks.is_empty() {
+                    self.add_debug("Album Radio: album has no tracks".to_string());
+                    self.playback.radio_fetching = false;
+                    return;
+                }
+                // Pick a random track from the album
+                use rand::Rng;
+                let idx = rand::thread_rng().gen_range(0..album_tracks.len());
+                match self.tidal_client.get_track_radio(album_tracks[idx].id, 10).await {
+                    Ok(tracks) => tracks,
+                    Err(e) => {
+                        self.add_debug(format!("Album Radio: failed to fetch tracks: {}", e));
+                        self.playback.radio_fetching = false;
+                        return;
+                    }
+                }
+            }
         };
 
         if radio_tracks.is_empty() {

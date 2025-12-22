@@ -298,12 +298,84 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             if app.view_mode == ViewMode::Downloads {
                 app.retry_selected_download();
             } else if app.playback.radio_mode() {
-                // Turn off radio/mix mode
+                // Turn off radio mode
                 app.playback.radio_seed = None;
                 app.add_debug("Radio mode OFF".to_string());
             } else {
                 // Turn on radio - determine seed based on context
-                if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 0 {
+                // Priority: ArtistDetail, AlbumDetail, Library tabs, Search tabs, Browse playlists, current track
+                if app.view_mode == ViewMode::ArtistDetail {
+                    // Artist detail view - use the viewed artist
+                    if let Some(ref artist) = app.artist_detail.artist {
+                        app.playback.radio_seed = Some(RadioSeed::Artist(artist.id));
+                        app.add_debug(format!("Artist Radio ON ({})", artist.name));
+                    } else {
+                        app.add_debug("No artist loaded for Radio".to_string());
+                    }
+                } else if app.view_mode == ViewMode::AlbumDetail {
+                    // Album detail view - use the viewed album
+                    if let Some(ref album) = app.album_detail.album {
+                        app.playback.radio_seed = Some(RadioSeed::Album(album.id.clone()));
+                        app.add_debug(format!("Album Radio ON ({})", album.title));
+                    } else {
+                        app.add_debug("No album loaded for Radio".to_string());
+                    }
+                } else if app.view_mode == ViewMode::Library && app.library.tab == LibraryTab::Artists {
+                    // Library Artists tab - use selected favorite artist
+                    if app.library.selected_artist < app.favorite_artists.len() {
+                        let artist = &app.favorite_artists[app.library.selected_artist];
+                        app.playback.radio_seed = Some(RadioSeed::Artist(artist.id));
+                        app.add_debug(format!("Artist Radio ON ({})", artist.name));
+                    } else {
+                        app.add_debug("No artist selected for Radio".to_string());
+                    }
+                } else if app.view_mode == ViewMode::Library && app.library.tab == LibraryTab::Albums {
+                    // Library Albums tab - use selected favorite album
+                    if app.library.selected_album < app.favorite_albums.len() {
+                        let album = &app.favorite_albums[app.library.selected_album];
+                        app.playback.radio_seed = Some(RadioSeed::Album(album.id.clone()));
+                        app.add_debug(format!("Album Radio ON ({})", album.title));
+                    } else {
+                        app.add_debug("No album selected for Radio".to_string());
+                    }
+                } else if app.view_mode == ViewMode::Search {
+                    if let Some(ref results) = app.search_results {
+                        match app.search.tab {
+                            SearchTab::Artists => {
+                                if app.search.selected_artist < results.artists.len() {
+                                    let artist = &results.artists[app.search.selected_artist];
+                                    app.playback.radio_seed = Some(RadioSeed::Artist(artist.id));
+                                    app.add_debug(format!("Artist Radio ON ({})", artist.name));
+                                } else {
+                                    app.add_debug("No artist selected for Radio".to_string());
+                                }
+                            }
+                            SearchTab::Albums => {
+                                if app.search.selected_album < results.albums.len() {
+                                    let album = &results.albums[app.search.selected_album];
+                                    app.playback.radio_seed = Some(RadioSeed::Album(album.id.clone()));
+                                    app.add_debug(format!("Album Radio ON ({})", album.title));
+                                } else {
+                                    app.add_debug("No album selected for Radio".to_string());
+                                }
+                            }
+                            _ => {
+                                // Fall through to track-based radio
+                                if let Some(ref track) = app.current_track {
+                                    app.playback.radio_seed = Some(RadioSeed::Track(track.id));
+                                    app.add_debug(format!("Radio ON (seed: {})", track.title));
+                                } else {
+                                    app.add_debug("No track playing for Radio seed".to_string());
+                                }
+                            }
+                        }
+                    } else if let Some(ref track) = app.current_track {
+                        app.playback.radio_seed = Some(RadioSeed::Track(track.id));
+                        app.add_debug(format!("Radio ON (seed: {})", track.title));
+                    } else {
+                        app.add_debug("No track playing for Radio seed".to_string());
+                    }
+                } else if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 0 {
                     // Playlist tab selected - use playlist as seed for mix radio
                     if app.browse.selected_playlist < app.playlists.len() {
                         let playlist = &app.playlists[app.browse.selected_playlist];
@@ -313,7 +385,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                         app.add_debug("No playlist selected for Mix Radio".to_string());
                     }
                 } else if let Some(ref track) = app.current_track {
-                    // Use current playing track as seed
+                    // Fallback: use current playing track as seed
                     app.playback.radio_seed = Some(RadioSeed::Track(track.id));
                     app.add_debug(format!("Radio ON (seed: {})", track.title));
                 } else {

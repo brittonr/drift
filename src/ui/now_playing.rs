@@ -164,6 +164,8 @@ pub fn render_now_playing(
         match &state.radio_seed {
             Some(RadioSeed::Track(_)) => modes.push("radio"),
             Some(RadioSeed::Playlist(_)) => modes.push("mix"),
+            Some(RadioSeed::Artist(_)) => modes.push("artist radio"),
+            Some(RadioSeed::Album(_)) => modes.push("album radio"),
             None => {}
         }
         let modes_str = if modes.is_empty() {

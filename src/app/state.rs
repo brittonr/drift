@@ -7,6 +7,8 @@ use crate::ui::{LibraryTab, SearchTab};
 pub enum RadioSeed {
     Track(u64),
     Playlist(String),
+    Artist(u64),
+    Album(String),
 }
 
 #[derive(PartialEq, Clone, Copy)]

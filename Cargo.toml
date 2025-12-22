@@ -41,3 +41,6 @@ tracing-subscriber = "0.3"
 
 # Configuration
 toml = "0.8"
+
+# Random number generation (for album radio track selection)
+rand = "0.8"
