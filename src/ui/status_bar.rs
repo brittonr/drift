@@ -1,9 +1,11 @@
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
+
+use super::theme::Theme;
 
 pub struct StatusBarState {
     pub is_searching: bool,
@@ -16,9 +18,10 @@ pub fn render_status_bar(
     f: &mut Frame,
     state: &StatusBarState,
     area: ratatui::layout::Rect,
+    theme: &Theme,
 ) {
     let status_bar = if let Some((ref msg, is_error)) = state.status_message {
-        let color = if is_error { Color::Red } else { Color::Yellow };
+        let color = if is_error { theme.error() } else { theme.warning() };
         Paragraph::new(Line::from(vec![
             Span::styled(
                 if is_error { "ERROR" } else { "INFO" },
@@ -29,7 +32,10 @@ pub fn render_status_bar(
         ]))
     } else if state.is_searching {
         Paragraph::new(Line::from(vec![
-            Span::styled("INSERT MODE", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "INSERT MODE",
+                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" | "),
             Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(": search | "),
@@ -38,7 +44,10 @@ pub fn render_status_bar(
         ]))
     } else if state.space_pressed {
         Paragraph::new(Line::from(vec![
-            Span::styled("SPACE", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "SPACE",
+                Style::default().fg(theme.primary()).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" + "),
             Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(": quit | "),
@@ -57,7 +66,10 @@ pub fn render_status_bar(
         ]))
     } else if state.pending_key == Some('g') {
         Paragraph::new(Line::from(vec![
-            Span::styled("g", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "g",
+                Style::default().fg(theme.primary()).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" + "),
             Span::styled("g", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(": top | "),
@@ -66,7 +78,10 @@ pub fn render_status_bar(
         ]))
     } else {
         Paragraph::new(Line::from(vec![
-            Span::styled("NORMAL", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "NORMAL",
+                Style::default().fg(theme.success()).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" | "),
             Span::styled("hjkl", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(": move | "),

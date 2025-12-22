@@ -1,12 +1,13 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
 
 use crate::tidal::{Album, Artist, TidalClient, Track};
-use super::styles::{format_track_with_indicator, is_track_playing, track_style};
+use super::styles::{format_track_with_indicator, is_track_playing};
+use super::theme::Theme;
 
 pub struct ArtistDetailViewState<'a> {
     pub artist: Option<&'a Artist>,
@@ -22,6 +23,7 @@ pub fn render_artist_detail_view(
     f: &mut Frame,
     state: &ArtistDetailViewState,
     area: Rect,
+    theme: &Theme,
 ) -> (Rect, Rect) {
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -44,7 +46,7 @@ pub fn render_artist_detail_view(
         .map(|(i, track)| {
             let is_selected = state.selected_panel == 0 && i == state.selected_track;
             let is_playing = is_track_playing(track.id, state.current_track_id);
-            let style = track_style(is_selected, is_playing);
+            let style = theme.track_style(is_selected, is_playing);
 
             let display = TidalClient::format_track_display(track);
             let display = format_track_with_indicator(display, is_playing);
@@ -63,12 +65,12 @@ pub fn render_artist_detail_view(
                 .borders(Borders::ALL)
                 .title(tracks_title)
                 .border_style(if state.selected_panel == 0 {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(theme.warning())
                 } else {
-                    Style::default()
+                    Style::default().fg(theme.border_normal())
                 }),
         )
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_style(theme.highlight_style())
         .highlight_symbol("> ");
 
     let selected_track = if state.selected_panel == 0 {
@@ -102,12 +104,12 @@ pub fn render_artist_detail_view(
                 .borders(Borders::ALL)
                 .title(albums_title)
                 .border_style(if state.selected_panel == 1 {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(theme.warning())
                 } else {
-                    Style::default()
+                    Style::default().fg(theme.border_normal())
                 }),
         )
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_style(theme.highlight_style())
         .highlight_symbol("> ");
 
     let selected_album = if state.selected_panel == 1 {

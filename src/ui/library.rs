@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
@@ -9,7 +9,8 @@ use ratatui::{
 
 use crate::history_db::HistoryEntry;
 use crate::tidal::{Album, Artist, TidalClient, Track};
-use super::styles::{format_track_with_indicator, is_track_playing, track_style};
+use super::styles::{format_track_with_indicator, is_track_playing};
+use super::theme::Theme;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum LibraryTab {
@@ -53,6 +54,7 @@ pub fn render_library_view(
     f: &mut Frame,
     state: &LibraryViewState,
     area: Rect,
+    theme: &Theme,
 ) -> Rect {
     let library_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -64,7 +66,7 @@ pub fn render_library_view(
         Span::styled(
             " Tracks ",
             if state.library_tab == LibraryTab::Tracks {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             },
@@ -73,7 +75,7 @@ pub fn render_library_view(
         Span::styled(
             " Albums ",
             if state.library_tab == LibraryTab::Albums {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             },
@@ -82,7 +84,7 @@ pub fn render_library_view(
         Span::styled(
             " Artists ",
             if state.library_tab == LibraryTab::Artists {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             },
@@ -91,7 +93,7 @@ pub fn render_library_view(
         Span::styled(
             " History ",
             if state.library_tab == LibraryTab::History {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             },
@@ -103,7 +105,7 @@ pub fn render_library_view(
             Block::default()
                 .title("Library [Tab: switch | r: refresh | f: unfavorite | b: back]")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_style(Style::default().fg(theme.primary())),
         )
         .alignment(Alignment::Center);
     f.render_widget(tab_line, library_chunks[0]);
@@ -120,7 +122,7 @@ pub fn render_library_view(
                 .map(|(i, track)| {
                     let is_selected = i == state.selected_favorite_track;
                     let is_playing = is_track_playing(track.id, state.current_track_id);
-                    let style = track_style(is_selected, is_playing);
+                    let style = theme.track_style(is_selected, is_playing);
 
                     let display = TidalClient::format_track_display(track);
                     let display = format_track_with_indicator(display, is_playing);
@@ -134,9 +136,9 @@ pub fn render_library_view(
                     Block::default()
                         .title(format!("Favorite Tracks ({}) [p: play | y: queue]", count))
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .border_style(Style::default().fg(theme.primary())),
                 )
-                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .highlight_style(theme.highlight_style())
                 .highlight_symbol("> ");
             f.render_stateful_widget(
                 list,
@@ -160,9 +162,9 @@ pub fn render_library_view(
                     Block::default()
                         .title(format!("Favorite Albums ({}) [Enter: add to queue]", count))
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .border_style(Style::default().fg(theme.primary())),
                 )
-                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .highlight_style(theme.highlight_style())
                 .highlight_symbol("> ");
             f.render_stateful_widget(
                 list,
@@ -185,9 +187,9 @@ pub fn render_library_view(
                     Block::default()
                         .title(format!("Favorite Artists ({}) [Enter: add top tracks]", count))
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .border_style(Style::default().fg(theme.primary())),
                 )
-                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .highlight_style(theme.highlight_style())
                 .highlight_symbol("> ");
             f.render_stateful_widget(
                 list,
@@ -203,7 +205,7 @@ pub fn render_library_view(
                 .map(|(i, entry)| {
                     let is_selected = i == state.selected_history_entry;
                     let is_playing = is_track_playing(entry.track_id, state.current_track_id);
-                    let style = track_style(is_selected, is_playing);
+                    let style = theme.track_style(is_selected, is_playing);
 
                     let time_ago = format_time_ago(entry.played_at);
                     let display = format!("{} - {} [{}]", entry.artist, entry.title, time_ago);
@@ -218,9 +220,9 @@ pub fn render_library_view(
                     Block::default()
                         .title(format!("Playback History ({}) [p: play | y: queue | f: favorite]", count))
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .border_style(Style::default().fg(theme.primary())),
                 )
-                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .highlight_style(theme.highlight_style())
                 .highlight_symbol("> ");
             f.render_stateful_widget(
                 list,

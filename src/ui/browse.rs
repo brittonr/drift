@@ -2,13 +2,14 @@ use std::collections::HashSet;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
 
 use crate::tidal::{Playlist, TidalClient, Track};
-use super::styles::{format_track_with_indicator, is_track_playing, track_style};
+use super::styles::{format_track_with_indicator, is_track_playing};
+use super::theme::Theme;
 
 pub struct BrowseViewState<'a> {
     pub playlists: &'a [Playlist],
@@ -24,6 +25,7 @@ pub fn render_browse_view(
     f: &mut Frame,
     state: &BrowseViewState,
     area: Rect,
+    theme: &Theme,
 ) -> (Rect, Rect) {
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -52,12 +54,12 @@ pub fn render_browse_view(
                 .borders(Borders::ALL)
                 .title("Playlists [h/l: switch | Enter: load | S: sync]")
                 .border_style(if state.selected_tab == 0 {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(theme.warning())
                 } else {
-                    Style::default()
+                    Style::default().fg(theme.border_normal())
                 }),
         )
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_style(theme.highlight_style())
         .highlight_symbol("> ");
 
     let selected_playlist = if state.selected_tab == 0 {
@@ -79,7 +81,7 @@ pub fn render_browse_view(
         .map(|(i, track)| {
             let is_selected = state.selected_tab == 1 && i == state.selected_track;
             let is_playing = is_track_playing(track.id, state.current_track_id);
-            let style = track_style(is_selected, is_playing);
+            let style = theme.track_style(is_selected, is_playing);
 
             let display = TidalClient::format_track_display(track);
             let display = format_track_with_indicator(display, is_playing);
@@ -93,12 +95,12 @@ pub fn render_browse_view(
                 .borders(Borders::ALL)
                 .title("Tracks [p/Enter: play | y: add to queue]")
                 .border_style(if state.selected_tab == 1 {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(theme.warning())
                 } else {
-                    Style::default()
+                    Style::default().fg(theme.border_normal())
                 }),
         )
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_style(theme.highlight_style())
         .highlight_symbol("> ");
 
     let selected_track = if state.selected_tab == 1 {

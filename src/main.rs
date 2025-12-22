@@ -20,7 +20,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
@@ -127,6 +127,9 @@ async fn run_app<B: ratatui::backend::Backend>(
 }
 
 fn render_ui(f: &mut Frame, app: &mut App) {
+    // Clone theme early to avoid borrow conflicts with mutable app access
+    let theme = app.config.theme.clone();
+
     let mut constraints = vec![
         Constraint::Length(3),  // Header
         Constraint::Length(9),  // Now Playing
@@ -165,9 +168,8 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             ViewMode::AlbumDetail => "Album",
         }
     );
-
     let header = Paragraph::new(header_text)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(Style::default().fg(theme.primary()).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Center)
         .block(
             Block::default()
@@ -190,7 +192,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         local_queue_len: app.local_queue.len(),
         album_art_cache: &mut app.album_art_cache,
     };
-    let progress_bar_area = render_now_playing(f, &mut { now_playing_state }, main_chunks[chunk_index]);
+    let progress_bar_area = render_now_playing(f, &mut { now_playing_state }, main_chunks[chunk_index], &theme);
     app.clickable_areas.progress_bar = progress_bar_area;
     chunk_index += 1;
 
@@ -201,6 +203,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             app.visualizer.as_ref(),
             app.playback.is_playing,
             main_chunks[chunk_index],
+            &theme,
         );
         chunk_index += 1;
     }
@@ -217,7 +220,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             ])
             .split(content_area);
 
-        render_main_content(f, app, content_chunks[0]);
+        render_main_content(f, app, content_chunks[0], &theme);
 
         let queue_area = render_queue(
             f,
@@ -225,11 +228,12 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             app.playback.selected_queue_item,
             app.current_track.as_ref().map(|t| t.id),
             content_chunks[1],
+            &theme,
         );
         app.clickable_areas.queue_list = Some(queue_area);
     } else {
         app.clickable_areas.queue_list = None;
-        render_main_content(f, app, content_area);
+        render_main_content(f, app, content_area, &theme);
     }
     chunk_index += 1;
 
@@ -244,13 +248,13 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         .join("\n");
 
     let debug_panel = Paragraph::new(debug_text)
-        .style(Style::default().fg(Color::Gray))
+        .style(Style::default().fg(theme.text_muted()))
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Debug Log [Space+e: export | Space+c: clear]")
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(theme.border_normal())),
         );
     f.render_widget(debug_panel, main_chunks[chunk_index]);
     chunk_index += 1;
@@ -262,14 +266,14 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         pending_key: app.key_state.pending_key,
         status_message: app.status_message.as_ref().map(|m| (m.message.clone(), m.is_error)),
     };
-    render_status_bar(f, &status_state, main_chunks[chunk_index]);
+    render_status_bar(f, &status_state, main_chunks[chunk_index], &theme);
 
     // Render help panel as overlay (last, so it's on top)
     if app.show_help {
         let help_state = HelpPanelState {
             scroll_offset: app.help.scroll_offset,
         };
-        render_help_panel(f, &help_state, f.area());
+        render_help_panel(f, &help_state, f.area(), &theme);
     }
 
     // Render dialog as topmost overlay
@@ -280,11 +284,11 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             selected_index: app.dialog.selected_index,
             playlists: &app.playlists,
         };
-        render_dialog(f, &dialog_state, f.area());
+        render_dialog(f, &dialog_state, f.area(), &theme);
     }
 }
 
-fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect, theme: &ui::Theme) {
     let current_track_id = app.current_track.as_ref().map(|t| t.id);
 
     match app.view_mode {
@@ -299,7 +303,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 synced_playlist_ids: synced_ids,
                 current_track_id,
             };
-            let (left, right) = render_browse_view(f, &browse_state, area);
+            let (left, right) = render_browse_view(f, &browse_state, area, theme);
             app.clickable_areas.left_list = Some(left);
             app.clickable_areas.right_list = Some(right);
         }
@@ -315,7 +319,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 current_track_id,
             };
             app.clickable_areas.left_list = None;
-            let right = render_search_view(f, &search_state, area);
+            let right = render_search_view(f, &search_state, area, theme);
             app.clickable_areas.right_list = Some(right);
         }
         ViewMode::Downloads => {
@@ -333,7 +337,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 failed_count: failed,
             };
             app.clickable_areas.left_list = None;
-            let right = render_downloads_view(f, &downloads_state, area);
+            let right = render_downloads_view(f, &downloads_state, area, theme);
             app.clickable_areas.right_list = Some(right);
         }
         ViewMode::Library => {
@@ -350,7 +354,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 current_track_id,
             };
             app.clickable_areas.left_list = None;
-            let right = render_library_view(f, &library_state, area);
+            let right = render_library_view(f, &library_state, area, theme);
             app.clickable_areas.right_list = Some(right);
         }
         ViewMode::ArtistDetail => {
@@ -363,7 +367,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 selected_panel: app.artist_detail.selected_panel,
                 current_track_id,
             };
-            let (left, right) = render_artist_detail_view(f, &artist_state, area);
+            let (left, right) = render_artist_detail_view(f, &artist_state, area, theme);
             app.clickable_areas.left_list = Some(left);
             app.clickable_areas.right_list = Some(right);
         }
@@ -375,7 +379,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 current_track_id,
             };
             app.clickable_areas.left_list = None;
-            let right = render_album_detail_view(f, &album_state, area);
+            let right = render_album_detail_view(f, &album_state, area, theme);
             app.clickable_areas.right_list = Some(right);
         }
     }

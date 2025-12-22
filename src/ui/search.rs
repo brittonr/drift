@@ -1,12 +1,13 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
 use crate::tidal::{SearchResults, TidalClient};
-use super::styles::{format_track_with_indicator, is_track_playing, track_style};
+use super::styles::{format_track_with_indicator, is_track_playing};
+use super::theme::Theme;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum SearchTab {
@@ -30,6 +31,7 @@ pub fn render_search_view(
     f: &mut Frame,
     state: &SearchViewState,
     area: Rect,
+    theme: &Theme,
 ) -> Rect {
     let search_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -41,7 +43,7 @@ pub fn render_search_view(
     // Search input box
     let search_input = Paragraph::new(state.search_query)
         .style(if state.is_searching {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(theme.warning())
         } else {
             Style::default()
         })
@@ -54,9 +56,9 @@ pub fn render_search_view(
                     "Search (/ to search again)"
                 })
                 .border_style(if state.is_searching {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(theme.warning())
                 } else {
-                    Style::default()
+                    Style::default().fg(theme.border_normal())
                 }),
         );
     f.render_widget(search_input, search_chunks[0]);
@@ -72,7 +74,7 @@ pub fn render_search_view(
                     .map(|(i, track)| {
                         let is_selected = i == state.selected_search_track;
                         let is_playing = is_track_playing(track.id, state.current_track_id);
-                        let style = track_style(is_selected, is_playing);
+                        let style = theme.track_style(is_selected, is_playing);
 
                         let display = TidalClient::format_track_display(track);
                         let display = format_track_with_indicator(display, is_playing);
@@ -85,9 +87,9 @@ pub fn render_search_view(
                         Block::default()
                             .borders(Borders::ALL)
                             .title(format!("Tracks ({}) [Tab: cycle results | p: play | y: add]", results.tracks.len()))
-                            .border_style(Style::default().fg(Color::Cyan)),
+                            .border_style(Style::default().fg(theme.primary())),
                     )
-                    .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                    .highlight_style(theme.highlight_style())
                     .highlight_symbol("> ");
                 f.render_stateful_widget(
                     list,
@@ -110,9 +112,9 @@ pub fn render_search_view(
                         Block::default()
                             .borders(Borders::ALL)
                             .title(format!("Albums ({}) [Tab: cycle results]", results.albums.len()))
-                            .border_style(Style::default().fg(Color::Magenta)),
+                            .border_style(Style::default().fg(theme.secondary())),
                     )
-                    .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                    .highlight_style(theme.highlight_style())
                     .highlight_symbol("> ");
                 f.render_stateful_widget(
                     list,
@@ -134,9 +136,9 @@ pub fn render_search_view(
                         Block::default()
                             .borders(Borders::ALL)
                             .title(format!("Artists ({}) [Tab: cycle results]", results.artists.len()))
-                            .border_style(Style::default().fg(Color::Green)),
+                            .border_style(Style::default().fg(theme.success())),
                     )
-                    .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                    .highlight_style(theme.highlight_style())
                     .highlight_symbol("> ");
                 f.render_stateful_widget(
                     list,
@@ -153,12 +155,13 @@ pub fn render_search_view(
         };
 
         let empty = Paragraph::new(empty_msg)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme.text_disabled()))
             .alignment(Alignment::Center)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Search Results"),
+                    .title("Search Results")
+                    .border_style(Style::default().fg(theme.border_normal())),
             );
         f.render_widget(empty, results_area);
     }

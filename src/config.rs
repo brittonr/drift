@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::ui::theme::Theme;
+
 const CONFIG_FILE_NAME: &str = "config.toml";
 
 /// Application configuration
@@ -13,6 +15,7 @@ pub struct Config {
     pub playback: PlaybackConfig,
     pub ui: UiConfig,
     pub downloads: DownloadsConfig,
+    pub theme: Theme,
 }
 
 impl Default for Config {
@@ -22,6 +25,7 @@ impl Default for Config {
             playback: PlaybackConfig::default(),
             ui: UiConfig::default(),
             downloads: DownloadsConfig::default(),
+            theme: Theme::default(),
         }
     }
 }

@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
@@ -10,6 +10,8 @@ use crate::album_art::AlbumArtCache;
 use crate::app::state::RadioSeed;
 use crate::mpd::CurrentSong;
 use crate::tidal::Track;
+
+use super::theme::Theme;
 
 pub struct NowPlayingState<'a> {
     pub current_track: Option<&'a Track>,
@@ -28,6 +30,7 @@ pub fn render_now_playing(
     f: &mut Frame,
     state: &mut NowPlayingState,
     area: Rect,
+    theme: &Theme,
 ) -> Option<Rect> {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -68,13 +71,13 @@ pub fn render_now_playing(
             Line::from(""),
             Line::from(""),
             Line::from(vec![
-                Span::styled("       ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+                Span::styled("       ", Style::default().fg(theme.text_disabled()).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(vec![
-                Span::styled("        ", Style::default().fg(Color::DarkGray)),
+                Span::styled("        ", Style::default().fg(theme.text_disabled())),
             ]),
             Line::from(vec![
-                Span::styled("       ", Style::default().fg(Color::DarkGray)),
+                Span::styled("       ", Style::default().fg(theme.text_disabled())),
             ]),
         ];
 
@@ -89,21 +92,21 @@ pub fn render_now_playing(
 
     if let Some(song) = state.current_song {
         let status_icon = if state.is_playing { ">" } else { "||" };
-        let status_color = if state.is_playing { Color::Green } else { Color::Yellow };
+        let status_color = if state.is_playing { theme.success() } else { theme.warning() };
 
         lines.push(Line::from(vec![
             Span::styled(format!(" {} ", status_icon), Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
-            Span::styled(&song.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(&song.title, Style::default().fg(theme.text()).add_modifier(Modifier::BOLD)),
         ]));
 
         lines.push(Line::from(vec![
             Span::raw("   Artist: "),
-            Span::styled(&song.artist, Style::default().fg(Color::Cyan)),
+            Span::styled(&song.artist, Style::default().fg(theme.primary())),
         ]));
 
         lines.push(Line::from(vec![
             Span::raw("   Album:  "),
-            Span::styled(&song.album, Style::default().fg(Color::Magenta)),
+            Span::styled(&song.album, Style::default().fg(theme.secondary())),
         ]));
 
         lines.push(Line::from(""));
@@ -134,12 +137,12 @@ pub fn render_now_playing(
 
         lines.push(Line::from(vec![
             Span::raw("   "),
-            Span::styled(format!("{:02}:{:02}", elapsed_secs / 60, elapsed_secs % 60), Style::default().fg(Color::Gray)),
+            Span::styled(format!("{:02}:{:02}", elapsed_secs / 60, elapsed_secs % 60), Style::default().fg(theme.text_muted())),
             Span::raw(" "),
-            Span::styled(filled_str, Style::default().fg(Color::Cyan)),
-            Span::styled(empty_str, Style::default().fg(Color::DarkGray)),
+            Span::styled(filled_str, Style::default().fg(theme.primary())),
+            Span::styled(empty_str, Style::default().fg(theme.text_disabled())),
             Span::raw(" "),
-            Span::styled(format!("{:02}:{:02}", total_secs / 60, total_secs % 60), Style::default().fg(Color::Gray)),
+            Span::styled(format!("{:02}:{:02}", total_secs / 60, total_secs % 60), Style::default().fg(theme.text_muted())),
             Span::raw(format!(" ({}%)", (progress * 100.0) as u8)),
         ]));
 
@@ -176,32 +179,32 @@ pub fn render_now_playing(
 
         lines.push(Line::from(vec![
             Span::styled(format!("   Vol: {}%  |  {}{}", state.volume, queue_info, modes_str),
-                Style::default().fg(Color::DarkGray)),
+                Style::default().fg(theme.text_disabled())),
         ]));
 
     } else {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("   No track playing", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+            Span::styled("   No track playing", Style::default().fg(theme.text_disabled()).add_modifier(Modifier::ITALIC)),
         ]));
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("   Press ", Style::default().fg(Color::DarkGray)),
-            Span::styled("p", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(" or ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(" to play a track", Style::default().fg(Color::DarkGray)),
+            Span::styled("   Press ", Style::default().fg(theme.text_disabled())),
+            Span::styled("p", Style::default().fg(theme.primary()).add_modifier(Modifier::BOLD)),
+            Span::styled(" or ", Style::default().fg(theme.text_disabled())),
+            Span::styled("Enter", Style::default().fg(theme.primary()).add_modifier(Modifier::BOLD)),
+            Span::styled(" to play a track", Style::default().fg(theme.text_disabled())),
         ]));
         lines.push(Line::from(""));
         lines.push(Line::from(""));
     }
 
     let border_style = if state.is_playing {
-        Style::default().fg(Color::Green)
+        Style::default().fg(theme.success())
     } else if state.current_song.is_some() {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(theme.warning())
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme.border_normal())
     };
 
     let title = if state.is_playing {

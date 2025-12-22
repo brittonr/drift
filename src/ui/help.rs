@@ -1,18 +1,19 @@
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
 use super::keybindings::KEYBINDING_CATEGORIES;
+use super::theme::Theme;
 
 pub struct HelpPanelState {
     pub scroll_offset: usize,
 }
 
-pub fn render_help_panel(f: &mut Frame, state: &HelpPanelState, area: Rect) {
+pub fn render_help_panel(f: &mut Frame, state: &HelpPanelState, area: Rect, theme: &Theme) {
     // Calculate centered overlay area (80% width, 90% height)
     let popup_width = (area.width as f32 * 0.80) as u16;
     let popup_height = (area.height as f32 * 0.90) as u16;
@@ -30,7 +31,7 @@ pub fn render_help_panel(f: &mut Frame, state: &HelpPanelState, area: Rect) {
     lines.push(Line::from(Span::styled(
         "Keybindings",
         Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.primary())
             .add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
@@ -39,7 +40,7 @@ pub fn render_help_panel(f: &mut Frame, state: &HelpPanelState, area: Rect) {
         lines.push(Line::from(Span::styled(
             category.name,
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.warning())
                 .add_modifier(Modifier::BOLD),
         )));
 
@@ -47,7 +48,7 @@ pub fn render_help_panel(f: &mut Frame, state: &HelpPanelState, area: Rect) {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("  {:16}", binding.keys),
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(theme.success()),
                 ),
                 Span::raw(binding.description),
             ]));
@@ -65,7 +66,7 @@ pub fn render_help_panel(f: &mut Frame, state: &HelpPanelState, area: Rect) {
                 .title_alignment(Alignment::Center)
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_style(Style::default().fg(theme.primary())),
         )
         .wrap(Wrap { trim: false });
 

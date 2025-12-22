@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
     Frame,
@@ -8,6 +8,7 @@ use ratatui::{
 
 use crate::app::state::DialogMode;
 use crate::tidal::Playlist;
+use super::theme::Theme;
 
 pub struct DialogRenderState<'a> {
     pub mode: &'a DialogMode,
@@ -16,7 +17,7 @@ pub struct DialogRenderState<'a> {
     pub playlists: &'a [Playlist],
 }
 
-pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect) {
+pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect, theme: &Theme) {
     match state.mode {
         DialogMode::None => {}
         DialogMode::CreatePlaylist => {
@@ -26,6 +27,7 @@ pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect) {
                 "Enter playlist name:",
                 state.input_text,
                 area,
+                theme,
             );
         }
         DialogMode::AddToPlaylist { track_title, .. } => {
@@ -35,6 +37,7 @@ pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect) {
                 state.playlists,
                 state.selected_index,
                 area,
+                theme,
             );
         }
         DialogMode::RenamePlaylist { playlist_title, .. } => {
@@ -44,6 +47,7 @@ pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect) {
                 "Enter new name:",
                 state.input_text,
                 area,
+                theme,
             );
         }
         DialogMode::ConfirmDeletePlaylist { playlist_title, .. } => {
@@ -52,6 +56,7 @@ pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect) {
                 "Delete Playlist",
                 &format!("Are you sure you want to delete '{}'?", playlist_title),
                 area,
+                theme,
             );
         }
     }
@@ -63,6 +68,7 @@ fn render_text_input_dialog(
     prompt: &str,
     input: &str,
     area: Rect,
+    theme: &Theme,
 ) {
     let popup_width = 50.min(area.width.saturating_sub(4));
     let popup_height = 7;
@@ -78,7 +84,7 @@ fn render_text_input_dialog(
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.primary()));
 
     f.render_widget(block.clone(), popup_area);
 
@@ -95,23 +101,23 @@ fn render_text_input_dialog(
 
     // Prompt
     let prompt_line = Paragraph::new(prompt)
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(theme.text()));
     f.render_widget(prompt_line, chunks[0]);
 
     // Input field with cursor
     let input_display = format!("{}_", input);
     let input_field = Paragraph::new(input_display)
-        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .style(Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD))
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(theme.text_disabled())),
         );
     f.render_widget(input_field, chunks[1]);
 
     // Help text
     let help_text = Paragraph::new("Enter: confirm | Esc: cancel")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme.text_disabled()))
         .alignment(Alignment::Center);
     f.render_widget(help_text, chunks[3]);
 }
@@ -122,6 +128,7 @@ fn render_playlist_selector_dialog(
     playlists: &[Playlist],
     selected: usize,
     area: Rect,
+    theme: &Theme,
 ) {
     let popup_width = 50.min(area.width.saturating_sub(4));
     let popup_height = 15.min(area.height.saturating_sub(4));
@@ -137,7 +144,7 @@ fn render_playlist_selector_dialog(
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.primary()));
 
     f.render_widget(block.clone(), popup_area);
 
@@ -157,11 +164,11 @@ fn render_playlist_selector_dialog(
         .map(|(i, p)| {
             let style = if i == selected {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .fg(theme.text())
+                    .bg(theme.primary())
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(theme.text())
             };
 
             let text = format!(
@@ -175,7 +182,7 @@ fn render_playlist_selector_dialog(
 
     if items.is_empty() {
         let empty_msg = Paragraph::new("No playlists available")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme.text_disabled()))
             .alignment(Alignment::Center);
         f.render_widget(empty_msg, chunks[0]);
     } else {
@@ -185,7 +192,7 @@ fn render_playlist_selector_dialog(
 
     // Help text
     let help_text = Paragraph::new("j/k: select | Enter: add | Esc: cancel")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme.text_disabled()))
         .alignment(Alignment::Center);
     f.render_widget(help_text, chunks[1]);
 }
@@ -195,6 +202,7 @@ fn render_confirm_dialog(
     title: &str,
     message: &str,
     area: Rect,
+    theme: &Theme,
 ) {
     let popup_width = 50.min(area.width.saturating_sub(4));
     let popup_height = 7;
@@ -210,7 +218,7 @@ fn render_confirm_dialog(
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Red));
+        .border_style(Style::default().fg(theme.error()));
 
     f.render_widget(block.clone(), popup_area);
 
@@ -225,13 +233,13 @@ fn render_confirm_dialog(
 
     // Message
     let msg = Paragraph::new(message)
-        .style(Style::default().fg(Color::White))
+        .style(Style::default().fg(theme.text()))
         .alignment(Alignment::Center);
     f.render_widget(msg, chunks[0]);
 
     // Help text
     let help_text = Paragraph::new("Enter/y: confirm | Esc/n: cancel")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme.text_disabled()))
         .alignment(Alignment::Center);
     f.render_widget(help_text, chunks[1]);
 }
