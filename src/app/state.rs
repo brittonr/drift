@@ -3,6 +3,12 @@ use ratatui::layout::Rect;
 use crate::tidal::{Album, Artist, Track};
 use crate::ui::{LibraryTab, SearchTab};
 
+#[derive(Clone)]
+pub enum RadioSeed {
+    Track(u64),
+    Playlist(String),
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum ViewMode {
     Browse,
@@ -80,9 +86,14 @@ pub struct PlaybackState {
     pub selected_queue_item: usize,
     pub show_queue: bool,
     pub queue_dirty: bool,
-    pub radio_mode: bool,
-    pub radio_seed_track: Option<u64>,
+    pub radio_seed: Option<RadioSeed>,
     pub radio_fetching: bool,
+}
+
+impl PlaybackState {
+    pub fn radio_mode(&self) -> bool {
+        self.radio_seed.is_some()
+    }
 }
 
 impl Default for PlaybackState {
@@ -96,8 +107,7 @@ impl Default for PlaybackState {
             selected_queue_item: 0,
             show_queue: false,
             queue_dirty: false,
-            radio_mode: false,
-            radio_seed_track: None,
+            radio_seed: None,
             radio_fetching: false,
         }
     }

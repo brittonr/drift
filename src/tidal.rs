@@ -1283,6 +1283,92 @@ impl TidalClient {
         Ok(vec![])
     }
 
+    /// Get playlist radio (mix radio - similar tracks based on playlist)
+    pub async fn get_playlist_radio(&mut self, playlist_id: &str, limit: usize) -> Result<Vec<Track>> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!("https://api.tidal.com/v1/playlists/{}/radio", playlist_id);
+
+                let response = self.http_client
+                    .get(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US"), ("limit", &limit.to_string())])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        let json: Value = resp.json().await?;
+
+                        let tracks = if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                            items.iter().filter_map(|item| {
+                                let id = item.get("id")?.as_u64()?;
+                                let title = item.get("title")?.as_str()?.to_string();
+
+                                let artist = item.get("artist")
+                                    .and_then(|a| a.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .or_else(|| {
+                                        item.get("artists")
+                                            .and_then(|a| a.as_array())
+                                            .and_then(|arr| arr.first())
+                                            .and_then(|a| a.get("name"))
+                                            .and_then(|n| n.as_str())
+                                    })
+                                    .unwrap_or("Unknown Artist")
+                                    .to_string();
+
+                                let album = item.get("album")
+                                    .and_then(|a| a.get("title"))
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("Unknown Album")
+                                    .to_string();
+
+                                let album_cover_id = item.get("album")
+                                    .and_then(|a| a.get("cover"))
+                                    .and_then(|c| c.as_str())
+                                    .map(|s| s.to_string());
+
+                                let duration = item.get("duration")?.as_u64()? as u32;
+
+                                Some(Track {
+                                    id,
+                                    title,
+                                    artist,
+                                    album,
+                                    duration_seconds: duration,
+                                    album_cover_id,
+                                })
+                            }).collect()
+                        } else {
+                            vec![]
+                        };
+
+                        return Ok(tracks);
+                    }
+                    Ok(resp) if resp.status().as_u16() == 404 => {
+                        // Playlist radio not available
+                        return Ok(vec![]);
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        eprintln!("Playlist radio request failed: {}", resp.status());
+                    }
+                    Err(e) => {
+                        eprintln!("Network error fetching playlist radio: {}", e);
+                    }
+                }
+            }
+            break;
+        }
+
+        Ok(vec![])
+    }
+
     /// Get albums for an artist (discography)
     pub async fn get_artist_albums(&mut self, artist_id: u64) -> Result<Vec<Album>> {
         for attempt in 0..2 {

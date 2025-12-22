@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::album_art::AlbumArtCache;
+use crate::app::state::RadioSeed;
 use crate::mpd::CurrentSong;
 use crate::tidal::Track;
 
@@ -18,7 +19,7 @@ pub struct NowPlayingState<'a> {
     pub repeat_mode: bool,
     pub random_mode: bool,
     pub single_mode: bool,
-    pub radio_mode: bool,
+    pub radio_seed: Option<RadioSeed>,
     pub local_queue_len: usize,
     pub album_art_cache: &'a mut AlbumArtCache,
 }
@@ -160,8 +161,10 @@ pub fn render_now_playing(
         if state.random_mode {
             modes.push("shuffle");
         }
-        if state.radio_mode {
-            modes.push("radio");
+        match &state.radio_seed {
+            Some(RadioSeed::Track(_)) => modes.push("radio"),
+            Some(RadioSeed::Playlist(_)) => modes.push("mix"),
+            None => {}
         }
         let modes_str = if modes.is_empty() {
             String::new()

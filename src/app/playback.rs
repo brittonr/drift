@@ -1,9 +1,9 @@
 use anyhow::Result;
 
 use super::App;
+use super::state::{RadioSeed, ViewMode};
 use crate::tidal::Track;
 use crate::ui::{SearchTab, LibraryTab};
-use super::state::ViewMode;
 
 impl App {
     pub async fn play_track(&mut self, track: Track) -> Result<()> {
@@ -152,7 +152,7 @@ impl App {
 
     pub async fn check_radio_queue(&mut self) {
         // Skip if radio mode is off or we're already fetching
-        if !self.playback.radio_mode || self.playback.radio_fetching {
+        if self.playback.radio_seed.is_none() || self.playback.radio_fetching {
             return;
         }
 
@@ -170,29 +170,40 @@ impl App {
             return;
         }
 
-        // Get seed track ID (current track or last in local_queue)
-        let seed_track_id = if let Some(ref track) = self.current_track {
-            track.id
-        } else if let Some(track) = self.local_queue.last() {
-            track.id
-        } else {
-            self.add_debug("Radio: no seed track available".to_string());
-            return;
-        };
-
-        // Update seed and set fetching flag
-        self.playback.radio_seed_track = Some(seed_track_id);
         self.playback.radio_fetching = true;
 
-        self.add_debug(format!("Radio: fetching similar tracks (seed: {})", seed_track_id));
-
-        // Fetch radio tracks
-        let radio_tracks = match self.tidal_client.get_track_radio(seed_track_id, 10).await {
-            Ok(tracks) => tracks,
-            Err(e) => {
-                self.add_debug(format!("Radio: failed to fetch tracks: {}", e));
+        // Clone the seed to avoid borrow issues
+        let radio_seed = match self.playback.radio_seed.clone() {
+            Some(seed) => seed,
+            None => {
                 self.playback.radio_fetching = false;
                 return;
+            }
+        };
+
+        // Fetch radio tracks based on seed type
+        let radio_tracks = match radio_seed {
+            RadioSeed::Track(track_id) => {
+                self.add_debug(format!("Radio: fetching similar tracks (seed track: {})", track_id));
+                match self.tidal_client.get_track_radio(track_id, 10).await {
+                    Ok(tracks) => tracks,
+                    Err(e) => {
+                        self.add_debug(format!("Radio: failed to fetch tracks: {}", e));
+                        self.playback.radio_fetching = false;
+                        return;
+                    }
+                }
+            }
+            RadioSeed::Playlist(playlist_id) => {
+                self.add_debug(format!("Mix: fetching similar tracks (seed playlist: {})", playlist_id));
+                match self.tidal_client.get_playlist_radio(&playlist_id, 10).await {
+                    Ok(tracks) => tracks,
+                    Err(e) => {
+                        self.add_debug(format!("Mix: failed to fetch tracks: {}", e));
+                        self.playback.radio_fetching = false;
+                        return;
+                    }
+                }
             }
         };
 

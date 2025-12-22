@@ -184,7 +184,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         repeat_mode: app.playback.repeat_mode,
         random_mode: app.playback.random_mode,
         single_mode: app.playback.single_mode,
-        radio_mode: app.playback.radio_mode,
+        radio_seed: app.playback.radio_seed.clone(),
         local_queue_len: app.local_queue.len(),
         album_art_cache: &mut app.album_art_cache,
     };

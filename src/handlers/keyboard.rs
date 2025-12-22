@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, ViewMode};
+use crate::app::state::RadioSeed;
 use crate::ui::library::LibraryTab;
 use crate::ui::search::SearchTab;
 
@@ -296,17 +297,27 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
         KeyCode::Char('R') => {
             if app.view_mode == ViewMode::Downloads {
                 app.retry_selected_download();
+            } else if app.playback.radio_mode() {
+                // Turn off radio/mix mode
+                app.playback.radio_seed = None;
+                app.add_debug("Radio mode OFF".to_string());
             } else {
-                // Toggle radio mode
-                app.playback.radio_mode = !app.playback.radio_mode;
-                if app.playback.radio_mode {
-                    if let Some(ref track) = app.current_track {
-                        app.playback.radio_seed_track = Some(track.id);
+                // Turn on radio - determine seed based on context
+                if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 0 {
+                    // Playlist tab selected - use playlist as seed for mix radio
+                    if app.browse.selected_playlist < app.playlists.len() {
+                        let playlist = &app.playlists[app.browse.selected_playlist];
+                        app.playback.radio_seed = Some(RadioSeed::Playlist(playlist.id.clone()));
+                        app.add_debug(format!("Mix Radio ON (playlist: {})", playlist.title));
+                    } else {
+                        app.add_debug("No playlist selected for Mix Radio".to_string());
                     }
-                    app.add_debug("Radio mode ON".to_string());
+                } else if let Some(ref track) = app.current_track {
+                    // Use current playing track as seed
+                    app.playback.radio_seed = Some(RadioSeed::Track(track.id));
+                    app.add_debug(format!("Radio ON (seed: {})", track.title));
                 } else {
-                    app.playback.radio_seed_track = None;
-                    app.add_debug("Radio mode OFF".to_string());
+                    app.add_debug("No track playing for Radio seed".to_string());
                 }
             }
         }
