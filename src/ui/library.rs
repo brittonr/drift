@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::history_db::HistoryEntry;
 use crate::service::{Album, Artist, Track};
-use super::styles::{format_track_with_indicator, is_track_playing};
+use super::styles::{format_track_with_indicator, is_track_playing, service_badge};
 use super::theme::Theme;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -125,7 +125,8 @@ pub fn render_library_view(
                     let style = theme.track_style(is_selected, is_playing);
 
                     let display = format!(
-                        "{} - {} ({}:{:02})",
+                        "{} {} - {} ({}:{:02})",
+                        service_badge(track.service),
                         track.artist,
                         track.title,
                         track.duration_seconds / 60,
@@ -157,7 +158,7 @@ pub fn render_library_view(
                 .favorite_albums
                 .iter()
                 .map(|album| {
-                    let display = format!("{} - {} ({} tracks)", album.artist, album.title, album.num_tracks);
+                    let display = format!("{} {} - {} ({} tracks)", service_badge(album.service), album.artist, album.title, album.num_tracks);
                     ListItem::new(display)
                 })
                 .collect();
@@ -183,7 +184,7 @@ pub fn render_library_view(
                 .favorite_artists
                 .iter()
                 .map(|artist| {
-                    ListItem::new(artist.name.clone())
+                    ListItem::new(format!("{} {}", service_badge(artist.service), artist.name))
                 })
                 .collect();
 

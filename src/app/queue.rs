@@ -3,7 +3,7 @@ use anyhow::Result;
 use super::App;
 use super::state::ViewMode;
 use crate::queue_persistence::{self, PersistedQueue};
-use crate::service::Track;
+use crate::service::{MusicService, Track};
 use crate::ui::search::SearchTab;
 
 impl App {

@@ -1824,7 +1824,7 @@ impl MusicService for TidalClient {
                         path, size, size
                     ))
                 }
-                ServiceType::YouTube => None,
+                ServiceType::YouTube | ServiceType::Bandcamp => None,
             },
             CoverArt::None => None,
         }

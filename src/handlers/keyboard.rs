@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, DialogMode, ViewMode};
 use crate::app::state::RadioSeed;
+use crate::service::ServiceType;
 use crate::ui::library::LibraryTab;
 use crate::ui::search::SearchTab;
 use crate::ui::help_content_height;
@@ -41,6 +42,11 @@ pub async fn handle_key_event(app: &mut App, key: KeyEvent) -> KeyAction {
     // Handle search input mode separately
     if app.search.is_active {
         return handle_search_input(app, key).await;
+    }
+
+    // Handle filter input mode in search view
+    if app.view_mode == ViewMode::Search && app.search.filter_active {
+        return handle_filter_input(app, key);
     }
 
     // Handle Space-prefixed commands
@@ -131,20 +137,110 @@ async fn handle_dialog_input(app: &mut App, key: KeyEvent) -> KeyAction {
 async fn handle_search_input(app: &mut App, key: KeyEvent) -> KeyAction {
     match key.code {
         KeyCode::Enter => {
+            // If history suggestion is selected, use it
+            if app.search.show_suggestions && app.search.history_index >= 0 {
+                let suggestions = app.search_history.get_suggestions(&app.search.query);
+                if let Some(suggestion) = suggestions.get(app.search.history_index as usize) {
+                    app.search.query = suggestion.to_string();
+                }
+            }
             app.search.is_active = false;
+            app.search.show_suggestions = false;
+            app.search.history_index = -1;
             if let Err(e) = app.search().await {
                 app.set_status_error(format!("Search error: {}", e));
             }
         }
         KeyCode::Esc => {
             app.search.is_active = false;
+            app.search.show_suggestions = false;
+            app.search.history_index = -1;
             app.search.query.clear();
         }
         KeyCode::Backspace => {
             app.search.query.pop();
+            app.search.show_suggestions = !app.search.query.is_empty();
+            app.search.history_index = -1;
+        }
+        KeyCode::Up => {
+            // Navigate history up
+            let suggestions = app.search_history.get_suggestions(&app.search.query);
+            if !suggestions.is_empty() {
+                app.search.show_suggestions = true;
+                let max_idx = suggestions.len() as i32 - 1;
+                app.search.history_index = (app.search.history_index + 1).min(max_idx);
+                // Update query to selected suggestion
+                if let Some(s) = suggestions.get(app.search.history_index as usize) {
+                    app.search.query = s.to_string();
+                }
+            }
+        }
+        KeyCode::Down => {
+            // Navigate history down
+            if app.search.history_index > 0 {
+                app.search.history_index -= 1;
+                let suggestions = app.search_history.get_suggestions("");
+                if let Some(s) = suggestions.get(app.search.history_index as usize) {
+                    app.search.query = s.to_string();
+                }
+            } else if app.search.history_index == 0 {
+                app.search.history_index = -1;
+                app.search.show_suggestions = false;
+            }
+        }
+        KeyCode::Tab => {
+            // Accept current suggestion if visible
+            if app.search.show_suggestions && app.search.history_index >= 0 {
+                let suggestions = app.search_history.get_suggestions(&app.search.query);
+                if let Some(s) = suggestions.get(app.search.history_index as usize) {
+                    app.search.query = s.to_string();
+                    app.search.show_suggestions = false;
+                    app.search.history_index = -1;
+                }
+            }
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.search.query.push(c);
+            // Show suggestions when typing
+            app.search.show_suggestions = true;
+            app.search.history_index = -1;
+        }
+        _ => {}
+    }
+    KeyAction::Continue
+}
+
+fn handle_filter_input(app: &mut App, key: KeyEvent) -> KeyAction {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => {
+            // Close filter mode but keep filter query for results
+            app.search.filter_active = false;
+        }
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+F toggles filter off
+            app.search.filter_active = false;
+            app.search.filter_query.clear();
+        }
+        KeyCode::Backspace => {
+            app.search.filter_query.pop();
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.search.filter_query.push(c);
+        }
+        // Allow navigation keys while filtering
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.move_down();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.move_up();
+        }
+        KeyCode::Tab => {
+            // Cycle through search tabs while filtering
+            app.search.tab = match app.search.tab {
+                SearchTab::Tracks => SearchTab::Albums,
+                SearchTab::Albums => SearchTab::Artists,
+                SearchTab::Artists => SearchTab::Tracks,
+            };
         }
         _ => {}
     }
@@ -267,6 +363,14 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             handle_play(app).await;
         }
 
+        // P: toggle preview panel in search view
+        KeyCode::Char('P') => {
+            if app.view_mode == ViewMode::Search {
+                app.search.show_preview = !app.search.show_preview;
+                app.add_debug(format!("Preview panel {}", if app.search.show_preview { "ON" } else { "OFF" }));
+            }
+        }
+
         // d: delete/remove from queue
         KeyCode::Char('d') => {
             handle_delete(app).await;
@@ -299,7 +403,20 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             app.view_mode = ViewMode::Search;
             app.search.is_active = true;
             app.search.query.clear();
+            app.search.show_suggestions = false;
+            app.search.history_index = -1;
             app.add_debug("Search mode activated".to_string());
+        }
+
+        // Ctrl+F: toggle filter mode in search view
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.view_mode == ViewMode::Search {
+                app.search.filter_active = !app.search.filter_active;
+                if !app.search.filter_active {
+                    app.search.filter_query.clear();
+                }
+                app.add_debug(format!("Filter mode {}", if app.search.filter_active { "ON" } else { "OFF" }));
+            }
         }
 
         // b: browse mode
@@ -371,8 +488,59 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             }
         }
         KeyCode::Char('1') => {
-            if let Err(e) = app.mpd_controller.toggle_single(&mut app.debug_log).await {
-                app.set_status_error(format!("Single toggle error: {}", e));
+            if app.view_mode == ViewMode::Search {
+                // Toggle Tidal filter
+                app.search.service_filter = if app.search.service_filter == Some(ServiceType::Tidal) {
+                    None
+                } else {
+                    Some(ServiceType::Tidal)
+                };
+                app.search.selected_track = 0;
+                app.search.selected_album = 0;
+                app.search.selected_artist = 0;
+                app.add_debug(format!("Service filter: {:?}", app.search.service_filter));
+            } else {
+                if let Err(e) = app.mpd_controller.toggle_single(&mut app.debug_log).await {
+                    app.set_status_error(format!("Single toggle error: {}", e));
+                }
+            }
+        }
+
+        KeyCode::Char('2') => {
+            if app.view_mode == ViewMode::Search {
+                // Toggle YouTube filter
+                app.search.service_filter = if app.search.service_filter == Some(ServiceType::YouTube) {
+                    None
+                } else {
+                    Some(ServiceType::YouTube)
+                };
+                app.search.selected_track = 0;
+                app.search.selected_album = 0;
+                app.search.selected_artist = 0;
+                app.add_debug(format!("Service filter: {:?}", app.search.service_filter));
+            }
+        }
+
+        KeyCode::Char('3') => {
+            if app.view_mode == ViewMode::Search {
+                // Toggle Bandcamp filter
+                app.search.service_filter = if app.search.service_filter == Some(ServiceType::Bandcamp) {
+                    None
+                } else {
+                    Some(ServiceType::Bandcamp)
+                };
+                app.search.selected_track = 0;
+                app.search.selected_album = 0;
+                app.search.selected_artist = 0;
+                app.add_debug(format!("Service filter: {:?}", app.search.service_filter));
+            }
+        }
+
+        KeyCode::Char('0') => {
+            if app.view_mode == ViewMode::Search {
+                // Clear service filter (show all)
+                app.search.service_filter = None;
+                app.add_debug("Service filter: All".to_string());
             }
         }
 

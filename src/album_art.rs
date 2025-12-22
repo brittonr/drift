@@ -93,6 +93,86 @@ impl AlbumArtCache {
         Ok(self.images.get(&cache_key).unwrap())
     }
 
+    /// Download and cache album art from a URL (for YouTube/Bandcamp)
+    pub async fn get_album_art_from_url(&mut self, url: &str, size: u32) -> Result<&DynamicImage> {
+        // Create a sanitized cache key from the URL
+        let url_hash = Self::hash_url(url);
+        let cache_key = format!("url_{}_{}", url_hash, size);
+
+        // Check if already in memory
+        if self.images.contains_key(&cache_key) {
+            return Ok(self.images.get(&cache_key).unwrap());
+        }
+
+        let cache_path = self.cache_dir.join(format!("{}.jpg", cache_key));
+
+        // Check if file exists on disk
+        let image = if cache_path.exists() {
+            image::open(&cache_path)
+                .context("Failed to load cached album art")?
+        } else {
+            // Download from URL
+            let response = reqwest::get(url)
+                .await
+                .context("Failed to download album art from URL")?;
+
+            let bytes = response.bytes()
+                .await
+                .context("Failed to read album art bytes")?;
+
+            // Save to disk cache
+            std::fs::write(&cache_path, &bytes)
+                .context("Failed to write album art to cache")?;
+
+            // Load and optionally resize the image
+            let mut img = image::load_from_memory(&bytes)
+                .context("Failed to decode album art")?;
+
+            // Resize if needed (YouTube thumbnails can be large)
+            if img.width() > size || img.height() > size {
+                img = img.thumbnail(size, size);
+            }
+
+            img
+        };
+
+        // Store in memory cache
+        self.images.insert(cache_key.clone(), image);
+
+        Ok(self.images.get(&cache_key).unwrap())
+    }
+
+    /// Simple hash function for URLs to create safe filenames
+    fn hash_url(url: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        url.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
+
+    /// Check if a URL-based image is cached
+    pub fn has_url_cached(&self, url: &str, size: u32) -> bool {
+        let url_hash = Self::hash_url(url);
+        let cache_key = format!("url_{}_{}", url_hash, size);
+        self.images.contains_key(&cache_key)
+    }
+
+    /// Set current image from URL cache
+    pub fn set_current_image_from_url(&mut self, url: &str, size: u32) -> Result<()> {
+        let url_hash = Self::hash_url(url);
+        let cache_key = format!("url_{}_{}", url_hash, size);
+
+        if let Some(image) = self.images.get(&cache_key) {
+            if let Some(ref mut picker) = self.picker {
+                let protocol = picker.new_resize_protocol(image.clone());
+                self.current_protocol = Some(protocol);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Set the current image to display (creates protocol for rendering)
     pub fn set_current_image(&mut self, cover_id: &str, size: u32) -> Result<()> {
         let cache_key = format!("{}_{}", cover_id, size);
@@ -140,4 +220,52 @@ impl AlbumArtCache {
         let cache_key = format!("{}_{}", cover_id, size);
         self.images.contains_key(&cache_key)
     }
+
+    /// Check if cover art is cached (handles CoverArt enum)
+    pub fn has_cover_cached(&self, cover: &crate::service::CoverArt, size: u32) -> bool {
+        match cover {
+            crate::service::CoverArt::ServiceId { id, .. } => self.has_cached(id, size),
+            crate::service::CoverArt::Url(url) => self.has_url_cached(url, size),
+            crate::service::CoverArt::None => false,
+        }
+    }
+
+    /// Set current image from CoverArt enum
+    pub fn set_current_from_cover(&mut self, cover: &crate::service::CoverArt, size: u32) -> Result<bool> {
+        match cover {
+            crate::service::CoverArt::ServiceId { id, .. } => {
+                if self.has_cached(id, size) {
+                    self.set_current_image(id, size)?;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            crate::service::CoverArt::Url(url) => {
+                if self.has_url_cached(url, size) {
+                    self.set_current_image_from_url(url, size)?;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            crate::service::CoverArt::None => Ok(false),
+        }
+    }
+
+    /// Get the cover art identifier for async loading
+    pub fn get_cover_source(cover: &crate::service::CoverArt) -> Option<CoverSource> {
+        match cover {
+            crate::service::CoverArt::ServiceId { id, .. } => Some(CoverSource::TidalId(id.clone())),
+            crate::service::CoverArt::Url(url) => Some(CoverSource::Url(url.clone())),
+            crate::service::CoverArt::None => None,
+        }
+    }
+}
+
+/// Cover art source for async loading
+#[derive(Debug, Clone)]
+pub enum CoverSource {
+    TidalId(String),
+    Url(String),
 }

@@ -17,6 +17,8 @@ pub struct Config {
     pub downloads: DownloadsConfig,
     pub theme: Theme,
     pub service: ServiceConfig,
+    pub bandcamp: BandcampConfig,
+    pub search: SearchConfig,
 }
 
 impl Default for Config {
@@ -28,6 +30,42 @@ impl Default for Config {
             downloads: DownloadsConfig::default(),
             theme: Theme::default(),
             service: ServiceConfig::default(),
+            bandcamp: BandcampConfig::default(),
+            search: SearchConfig::default(),
+        }
+    }
+}
+
+/// Search configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchConfig {
+    /// Maximum results per content type (tracks, albums, artists)
+    pub max_results: usize,
+    /// Debounce delay in milliseconds for live search preview
+    pub debounce_ms: u64,
+    /// Enable fuzzy matching for local result filtering
+    pub fuzzy_filter: bool,
+    /// Search timeout per service in seconds
+    pub timeout_seconds: u64,
+    /// Maximum search history entries to keep
+    pub history_size: usize,
+    /// Enable live search preview while typing
+    pub live_preview: bool,
+    /// Minimum characters before triggering live search
+    pub min_chars: usize,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            max_results: 30,
+            debounce_ms: 300,
+            fuzzy_filter: true,
+            timeout_seconds: 10,
+            history_size: 50,
+            live_preview: true,
+            min_chars: 2,
         }
     }
 }
@@ -36,14 +74,51 @@ impl Default for Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServiceConfig {
-    /// Music service to use: "tidal" or "youtube"
-    pub service: String,
+    /// Primary service for default operations
+    pub primary: String,
+    /// Auto-detect available services (default: true)
+    /// When true, enables YouTube/Bandcamp if yt-dlp is found
+    pub auto_detect: bool,
+    /// Explicitly enabled services (empty = all available)
+    /// Example: ["tidal", "youtube"] to exclude bandcamp
+    pub enabled: Vec<String>,
+    /// Legacy: single service mode (deprecated, use primary instead)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
 }
 
 impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
-            service: "tidal".to_string(),
+            primary: "tidal".to_string(),
+            auto_detect: true,
+            enabled: vec![], // Empty = auto-detect all
+            service: None,
+        }
+    }
+}
+
+/// Bandcamp-specific configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BandcampConfig {
+    /// Path to Netscape-format cookie file (e.g., from browser export)
+    pub cookie_file: Option<String>,
+    /// Browser to extract cookies from (chrome, firefox, brave, edge, etc.)
+    pub cookies_from_browser: Option<String>,
+    /// Bandcamp username for collection URL (e.g., "myusername" for bandcamp.com/myusername)
+    pub username: Option<String>,
+    /// Cache duration in hours for artist/album metadata
+    pub cache_duration_hours: u32,
+}
+
+impl Default for BandcampConfig {
+    fn default() -> Self {
+        Self {
+            cookie_file: None,
+            cookies_from_browser: None,
+            username: None,
+            cache_duration_hours: 24,
         }
     }
 }

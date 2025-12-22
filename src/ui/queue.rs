@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use crate::service::Track;
-use super::styles::{format_track_with_indicator, is_track_playing};
+use super::styles::{format_track_with_indicator, is_track_playing, service_badge};
 use super::theme::Theme;
 
 pub fn render_queue(
@@ -42,8 +42,9 @@ pub fn render_queue(
         let duration_str = format!("{}:{:02}", track.duration_seconds / 60, track.duration_seconds % 60);
 
         let content = format!(
-            "{:2}. {} - {} [{}]",
+            "{:2}. {} {} - {} [{}]",
             i + 1,
+            service_badge(track.service),
             track.artist,
             track.title,
             duration_str

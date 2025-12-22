@@ -146,9 +146,9 @@ impl DownloadManager {
         self.is_paused
     }
 
-    pub async fn process_next_download(
+    pub async fn process_next_download<S: MusicService>(
         &self,
-        music_service: &mut Box<dyn MusicService>,
+        music_service: &mut S,
         debug_log: &mut VecDeque<String>,
     ) -> Result<bool> {
         if self.is_paused {
@@ -203,10 +203,10 @@ impl DownloadManager {
         Ok(true)
     }
 
-    async fn download_track(
+    async fn download_track<S: MusicService>(
         &self,
         track: &Track,
-        music_service: &mut Box<dyn MusicService>,
+        music_service: &mut S,
         debug_log: &mut VecDeque<String>,
     ) -> Result<String> {
         // Get stream URL (time-limited, must download immediately)

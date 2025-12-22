@@ -2,15 +2,15 @@ use anyhow::Result;
 
 use super::App;
 use super::state::{RadioSeed, ViewMode};
-use crate::service::{CoverArt, Track};
+use crate::service::{CoverArt, MusicService, Track};
 use crate::ui::{SearchTab, LibraryTab};
 
 impl App {
     pub async fn play_track(&mut self, track: Track) -> Result<()> {
         self.add_debug(format!("Playing: {} - {}", track.artist, track.title));
 
-        self.add_debug(format!("Getting stream URL for track ID {}...", track.id));
-        let stream_url = match self.music_service.get_stream_url(&track.id).await {
+        self.add_debug(format!("Getting stream URL for track ID {} ({})...", track.id, track.service));
+        let stream_url = match self.music_service.get_stream_url_for_track(&track).await {
             Ok(url) => {
                 self.add_debug(format!("Got URL: {}...", &url[..50.min(url.len())]));
                 url

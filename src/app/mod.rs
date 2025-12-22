@@ -16,8 +16,8 @@ use crate::download_db::DownloadRecord;
 use crate::history_db::{HistoryDb, HistoryEntry};
 use crate::mpd::{CurrentSong, MpdController, QueueItem};
 use crate::queue_persistence::{self, PersistedQueue};
-use crate::service::{MusicService, Album, Artist, Playlist, SearchResults, Track};
-use crate::tidal::TidalClient;
+use crate::search::{ResultScorer, SearchHistory};
+use crate::service::{Album, Artist, CoverArt, MixedPlaylistStorage, MultiServiceManager, MusicService, Playlist, SearchResults, Track};
 use crate::downloads::{DownloadEvent, DownloadManager};
 
 pub use state::{
@@ -38,6 +38,7 @@ pub struct App {
     // Search mode data
     pub search: SearchState,
     pub search_results: Option<SearchResults>,
+    pub search_history: SearchHistory,
 
     // Playback state
     pub playback: PlaybackState,
@@ -47,8 +48,8 @@ pub struct App {
     pub local_queue: Vec<Track>,
 
     // Core components
-    pub music_service: Box<dyn MusicService>,
-    pub tidal_client: TidalClient,  // Kept temporarily for cover URL generation
+    pub music_service: MultiServiceManager,
+    pub mixed_playlists: MixedPlaylistStorage,
     pub mpd_controller: MpdController,
     pub debug_log: VecDeque<String>,
     pub visualizer: Option<CavaVisualizer>,
@@ -118,30 +119,28 @@ impl App {
             }
         };
 
-        // Initialize music service
-        debug_log.push_back(format!("Initializing {} service...", config.service.service));
-        let mut music_service: Box<dyn MusicService> = match config.service.service.as_str() {
-            "youtube" | "ytmusic" => {
-                match crate::service::YouTubeClient::new(None).await {
-                    Ok(client) => Box::new(client),
-                    Err(e) => {
-                        debug_log.push_back(format!("YouTube init failed: {}, falling back to Tidal", e));
-                        Box::new(crate::service::TidalClient::new().await?)
-                    }
-                }
-            }
-            _ => Box::new(crate::service::TidalClient::new().await?),
-        };
+        // Initialize multi-service manager
+        debug_log.push_back("Initializing music services...".to_string());
+        let mut music_service = MultiServiceManager::new(&config).await?;
         music_service.set_audio_quality(&config.playback.audio_quality);
 
-        if music_service.is_authenticated() {
-            debug_log.push_back(format!("{} credentials loaded", config.service.service));
-        } else {
-            debug_log.push_back(format!("No {} credentials - demo mode", config.service.service));
+        // Log enabled services
+        for service in music_service.enabled_services() {
+            debug_log.push_back(format!("  {} enabled", service));
         }
 
-        // Keep legacy TidalClient for cover URL generation (temporary)
-        let tidal_client = TidalClient::new().await?;
+        // Log any initialization errors
+        for (service, error) in music_service.init_errors() {
+            debug_log.push_back(format!("  {} unavailable: {}", service, error));
+        }
+
+        debug_log.push_back(format!("Primary service: {}", music_service.primary_service()));
+
+        // Load mixed playlist storage
+        let mixed_playlists = MixedPlaylistStorage::load().unwrap_or_default();
+        if !mixed_playlists.playlists.is_empty() {
+            debug_log.push_back(format!("Loaded {} mixed playlists", mixed_playlists.playlists.len()));
+        }
 
         // Initialize MPD controller with config
         debug_log.push_back("Connecting to MPD...".to_string());
@@ -249,13 +248,20 @@ impl App {
         let default_volume = config.playback.default_volume;
         let show_visualizer = config.ui.show_visualizer;
 
+        // Load search history
+        let search_history = SearchHistory::load(config.search.history_size);
+        if !search_history.entries.is_empty() {
+            debug_log.push_back(format!("Loaded {} search history entries", search_history.entries.len()));
+        }
+
         Ok(Self {
             view_mode: ViewMode::Browse,
             playlists,
             tracks,
             browse: BrowseState::default(),
-            search: SearchState::default(),
+            search: SearchState::new(),
             search_results: None,
+            search_history,
             playback: PlaybackState {
                 volume: default_volume,
                 ..Default::default()
@@ -265,7 +271,7 @@ impl App {
             queue: Vec::new(),
             local_queue,
             music_service,
-            tidal_client,
+            mixed_playlists,
             mpd_controller,
             debug_log,
             visualizer,
@@ -370,24 +376,43 @@ impl App {
             return Ok(());
         }
 
-        self.add_debug(format!("Searching for: {}", self.search.query));
+        let query = self.search.query.clone();
+        let max_results = self.config.search.max_results;
+        let page = self.search.page;
+
+        self.add_debug(format!("Searching for: {} (page {}, limit {})", query, page + 1, max_results));
         self.search.is_active = true;
 
-        match self.music_service.search(&self.search.query, 20).await {
-            Ok(results) => {
+        match self.music_service.search(&query, max_results).await {
+            Ok(mut results) => {
                 let track_count = results.tracks.len();
                 let album_count = results.albums.len();
                 let artist_count = results.artists.len();
-                self.add_debug(format!("Found {} tracks, {} albums, {} artists",
+                let total_count = track_count + album_count + artist_count;
+
+                // Score and sort results for relevance
+                ResultScorer::score_results(&mut results, &query);
+
+                self.add_debug(format!("Found {} tracks, {} albums, {} artists (scored & sorted)",
                     track_count, album_count, artist_count));
+
+                // Check if more results might be available (heuristic)
+                self.search.has_more = track_count >= max_results
+                    || album_count >= max_results
+                    || artist_count >= max_results;
 
                 self.search_results = Some(results);
                 self.search.selected_track = 0;
                 self.search.selected_album = 0;
                 self.search.selected_artist = 0;
+
+                // Record search in history
+                self.search_history.add(&query, total_count);
+                let _ = self.search_history.save();
             }
             Err(e) => {
                 self.add_debug(format!("Search failed: {}", e));
+                self.set_status_error(format!("Search failed: {}", e));
             }
         }
 
@@ -804,6 +829,60 @@ impl App {
             }
             Err(e) => {
                 self.add_debug(format!("Failed to remove track: {}", e));
+            }
+        }
+    }
+
+    /// Prefetch album art for the currently selected search result
+    pub async fn prefetch_search_preview_art(&mut self) {
+        // Only prefetch when preview is enabled and in search mode
+        if !self.search.show_preview || self.view_mode != ViewMode::Search {
+            return;
+        }
+
+        // Get the cover art for the selected item
+        let cover_art = match self.search.tab {
+            crate::ui::SearchTab::Tracks => {
+                self.search_results.as_ref().and_then(|r| {
+                    // Apply service filter
+                    let filtered: Vec<_> = r.tracks.iter()
+                        .filter(|t| self.search.service_filter.map_or(true, |s| t.service == s))
+                        .collect();
+                    filtered.get(self.search.selected_track).map(|t| t.cover_art.clone())
+                })
+            }
+            crate::ui::SearchTab::Albums => {
+                self.search_results.as_ref().and_then(|r| {
+                    let filtered: Vec<_> = r.albums.iter()
+                        .filter(|a| self.search.service_filter.map_or(true, |s| a.service == s))
+                        .collect();
+                    filtered.get(self.search.selected_album).map(|a| a.cover_art.clone())
+                })
+            }
+            crate::ui::SearchTab::Artists => {
+                // Artists don't have cover art in our model
+                None
+            }
+        };
+
+        // Load the cover art if not cached
+        if let Some(cover) = cover_art {
+            match &cover {
+                CoverArt::ServiceId { id, .. } => {
+                    if !self.album_art_cache.has_cached(id, 320) {
+                        if let Err(e) = self.album_art_cache.get_album_art(id, 320).await {
+                            self.add_debug(format!("Preview art load failed: {}", e));
+                        }
+                    }
+                }
+                CoverArt::Url(url) => {
+                    if !self.album_art_cache.has_url_cached(url, 320) {
+                        if let Err(e) = self.album_art_cache.get_album_art_from_url(url, 320).await {
+                            self.add_debug(format!("Preview art load failed: {}", e));
+                        }
+                    }
+                }
+                CoverArt::None => {}
             }
         }
     }

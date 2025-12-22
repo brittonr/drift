@@ -1,9 +1,29 @@
 use ratatui::style::{Color, Modifier, Style};
 
+use crate::service::ServiceType;
+
 /// Indicator prefix for currently playing track
 pub const PLAYING_INDICATOR: &str = ">> ";
 /// Padding to align non-playing tracks with playing ones
 pub const PLAYING_PADDING: &str = "   ";
+
+/// Service badge strings for display
+pub fn service_badge(service: ServiceType) -> &'static str {
+    match service {
+        ServiceType::Tidal => "[T]",
+        ServiceType::YouTube => "[Y]",
+        ServiceType::Bandcamp => "[B]",
+    }
+}
+
+/// Get the color associated with a service
+pub fn service_color(service: ServiceType) -> Color {
+    match service {
+        ServiceType::Tidal => Color::Cyan,
+        ServiceType::YouTube => Color::Red,
+        ServiceType::Bandcamp => Color::Magenta,
+    }
+}
 
 /// Determine the style for a track in a list
 pub fn track_style(is_selected: bool, is_playing: bool) -> Style {

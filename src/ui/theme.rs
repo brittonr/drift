@@ -136,6 +136,16 @@ impl Theme {
         Self::parse_color(&self.border_normal)
     }
 
+    /// Border highlight color (alias for border_focused)
+    pub fn border_highlight(&self) -> Color {
+        Self::parse_color(&self.border_focused)
+    }
+
+    /// Background color (dark terminals default to black)
+    pub fn background(&self) -> Color {
+        Color::Black
+    }
+
     // Style helpers
     pub fn track_style(&self, is_selected: bool, is_playing: bool) -> Style {
         match (is_selected, is_playing) {

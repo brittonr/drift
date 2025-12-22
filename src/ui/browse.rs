@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::service::{Playlist, Track};
-use super::styles::{format_track_with_indicator, is_track_playing};
+use super::styles::{format_track_with_indicator, is_track_playing, service_badge};
 use super::theme::Theme;
 
 pub struct BrowseViewState<'a> {
@@ -84,7 +84,8 @@ pub fn render_browse_view(
             let style = theme.track_style(is_selected, is_playing);
 
             let display = format!(
-                "{} - {} ({}:{:02})",
+                "{} {} - {} ({}:{:02})",
+                service_badge(track.service),
                 track.artist,
                 track.title,
                 track.duration_seconds / 60,

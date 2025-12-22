@@ -1,14 +1,22 @@
+pub mod bandcamp;
+pub mod bandcamp_storage;
+pub mod mixed_playlist;
+pub mod multi;
 pub mod tidal;
 pub mod youtube;
+pub mod youtube_storage;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 /// Identifies which music service a resource comes from
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ServiceType {
     Tidal,
     YouTube,
+    Bandcamp,
 }
 
 impl std::fmt::Display for ServiceType {
@@ -16,6 +24,7 @@ impl std::fmt::Display for ServiceType {
         match self {
             ServiceType::Tidal => write!(f, "tidal"),
             ServiceType::YouTube => write!(f, "youtube"),
+            ServiceType::Bandcamp => write!(f, "bandcamp"),
         }
     }
 }
@@ -27,6 +36,7 @@ impl std::str::FromStr for ServiceType {
         match s.to_lowercase().as_str() {
             "tidal" => Ok(ServiceType::Tidal),
             "youtube" | "ytmusic" | "youtube_music" => Ok(ServiceType::YouTube),
+            "bandcamp" | "bc" => Ok(ServiceType::Bandcamp),
             _ => Err(anyhow::anyhow!("Unknown service type: {}", s)),
         }
     }
@@ -54,6 +64,11 @@ impl CoverArt {
 
     /// Create a YouTube cover art reference (direct URL)
     pub fn youtube(url: String) -> Self {
+        CoverArt::Url(url)
+    }
+
+    /// Create a Bandcamp cover art reference (direct URL)
+    pub fn bandcamp(url: String) -> Self {
         CoverArt::Url(url)
     }
 
@@ -247,5 +262,8 @@ pub trait MusicService: Send + Sync {
 }
 
 // Re-export the service implementations
+pub use bandcamp::BandcampClient;
+pub use mixed_playlist::MixedPlaylistStorage;
+pub use multi::MultiServiceManager;
 pub use tidal::TidalClient;
 pub use youtube::YouTubeClient;

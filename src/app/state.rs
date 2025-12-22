@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 use std::time::Instant;
 
-use crate::service::{Album, Artist, Track};
+use crate::service::{Album, Artist, ServiceType, Track};
 use crate::ui::{LibraryTab, SearchTab};
 
 /// Status message for display in the status bar
@@ -54,6 +54,31 @@ pub struct SearchState {
     pub selected_album: usize,
     pub selected_artist: usize,
     pub is_active: bool,
+    /// Filter query for fuzzy filtering current results
+    pub filter_query: String,
+    /// Is filter mode active (Ctrl+F to toggle)
+    pub filter_active: bool,
+    /// History navigation index (-1 = none)
+    pub history_index: i32,
+    /// Show history suggestions popup
+    pub show_suggestions: bool,
+    /// Current page for pagination (0-indexed)
+    pub page: usize,
+    /// Whether more results are available
+    pub has_more: bool,
+    /// Service filter (None = all services, Some = specific service)
+    pub service_filter: Option<ServiceType>,
+    /// Show preview panel with album art (default: true)
+    pub show_preview: bool,
+}
+
+impl SearchState {
+    pub fn new() -> Self {
+        Self {
+            show_preview: true,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for SearchTab {

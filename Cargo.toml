@@ -45,3 +45,10 @@ toml = "0.8"
 
 # Random number generation (for album radio track selection)
 rand = "0.8"
+
+# HTML scraping (for Bandcamp search)
+scraper = "0.20"
+urlencoding = "2"
+
+# Fuzzy matching for search (used by helix-editor, ~6x faster than skim)
+nucleo = "0.5"

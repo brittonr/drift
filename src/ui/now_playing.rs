@@ -11,6 +11,7 @@ use crate::app::state::RadioSeed;
 use crate::mpd::CurrentSong;
 use crate::service::{CoverArt, Track};
 
+use super::styles::service_badge;
 use super::theme::Theme;
 
 pub struct NowPlayingState<'a> {
@@ -99,9 +100,14 @@ pub fn render_now_playing(
         let status_icon = if state.is_playing { ">" } else { "||" };
         let status_color = if state.is_playing { theme.success() } else { theme.warning() };
 
+        // Get service badge from current track if available
+        let service_prefix = state.current_track
+            .map(|t| format!("{} ", service_badge(t.service)))
+            .unwrap_or_default();
+
         lines.push(Line::from(vec![
             Span::styled(format!(" {} ", status_icon), Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
-            Span::styled(&song.title, Style::default().fg(theme.text()).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}{}", service_prefix, &song.title), Style::default().fg(theme.text()).add_modifier(Modifier::BOLD)),
         ]));
 
         lines.push(Line::from(vec![

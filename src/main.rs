@@ -8,6 +8,7 @@ mod history_db;
 mod downloads;
 mod config;
 mod service;
+mod search;
 mod app;
 mod ui;
 mod handlers;
@@ -29,6 +30,7 @@ use std::{io, time::Duration};
 
 use app::{App, ViewMode};
 use handlers::{handle_key_event, KeyAction};
+use service::MusicService;
 use ui::{
     render_now_playing, render_visualizer, render_queue, render_browse_view,
     render_search_view, render_downloads_view, render_library_view, render_status_bar,
@@ -106,6 +108,9 @@ async fn run_app<B: ratatui::backend::Backend>(
         app.handle_download_events();
         app.clear_expired_status();
 
+        // Prefetch album art for search preview
+        app.prefetch_search_preview_art().await;
+
         terminal.draw(|f| render_ui(f, app))?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -155,7 +160,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
     // Header
     let header_text = format!(
         "{} - {} Mode",
-        if app.tidal_client.config.is_some() {
+        if app.music_service.is_authenticated() {
             "Tidal TUI - Connected"
         } else {
             "Tidal TUI - Demo Mode"
@@ -309,7 +314,14 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
             app.clickable_areas.right_list = Some(right);
         }
         ViewMode::Search => {
-            let search_state = ui::search::SearchViewState {
+            // Get history suggestions when search is active
+            let suggestions: Vec<&str> = if app.search.is_active && app.search.show_suggestions {
+                app.search_history.get_suggestions(&app.search.query)
+            } else {
+                vec![]
+            };
+
+            let mut search_state = ui::search::SearchViewState {
                 search_query: &app.search.query,
                 search_results: app.search_results.as_ref(),
                 search_tab: app.search.tab,
@@ -318,9 +330,19 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 selected_search_artist: app.search.selected_artist,
                 is_searching: app.search.is_active,
                 current_track_id,
+                filter_query: &app.search.filter_query,
+                filter_active: app.search.filter_active,
+                history_suggestions: &suggestions,
+                show_suggestions: app.search.show_suggestions,
+                selected_suggestion: app.search.history_index.max(0) as usize,
+                page: app.search.page,
+                has_more: app.search.has_more,
+                service_filter: app.search.service_filter,
+                show_preview: app.search.show_preview,
+                album_art_cache: &mut app.album_art_cache,
             };
             app.clickable_areas.left_list = None;
-            let right = render_search_view(f, &search_state, area, theme);
+            let right = render_search_view(f, &mut search_state, area, theme);
             app.clickable_areas.right_list = Some(right);
         }
         ViewMode::Downloads => {
