@@ -303,12 +303,17 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
 
         KeyCode::Char('f') => {
             if app.view_mode == ViewMode::Library && app.library.tab == LibraryTab::Tracks {
+                // Remove from favorites
                 if !app.favorite_tracks.is_empty() && app.library.selected_track < app.favorite_tracks.len() {
-                    let track = app.favorite_tracks[app.library.selected_track].clone();
-                    app.add_debug(format!("Removing from favorites: {}", track.title));
+                    app.remove_favorite_track(app.library.selected_track).await;
                 }
             } else {
-                app.add_debug("Adding to favorites...".to_string());
+                // Add selected track to favorites
+                if let Some(track) = app.get_selected_track() {
+                    app.add_favorite_track(track).await;
+                } else {
+                    app.add_debug("No track selected to favorite".to_string());
+                }
             }
         }
 

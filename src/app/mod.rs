@@ -370,4 +370,65 @@ impl App {
         }
         synced
     }
+
+    pub async fn remove_favorite_track(&mut self, index: usize) {
+        if index >= self.favorite_tracks.len() {
+            return;
+        }
+
+        let track = self.favorite_tracks[index].clone();
+        self.add_debug(format!("Removing from favorites: {}", track.title));
+
+        match self.tidal_client.remove_favorite_track(track.id).await {
+            Ok(()) => {
+                self.add_debug(format!("Removed '{}' from favorites", track.title));
+                self.favorite_tracks.remove(index);
+                if self.library.selected_track > 0 && self.library.selected_track >= self.favorite_tracks.len() {
+                    self.library.selected_track = self.favorite_tracks.len().saturating_sub(1);
+                }
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to remove from favorites: {}", e));
+            }
+        }
+    }
+
+    pub async fn add_favorite_track(&mut self, track: Track) {
+        self.add_debug(format!("Adding to favorites: {}", track.title));
+
+        match self.tidal_client.add_favorite_track(track.id).await {
+            Ok(()) => {
+                self.add_debug(format!("Added '{}' to favorites", track.title));
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to add to favorites: {}", e));
+            }
+        }
+    }
+
+    pub fn get_selected_track(&self) -> Option<Track> {
+        match self.view_mode {
+            ViewMode::Browse => {
+                if self.browse.selected_tab == 1 && self.browse.selected_track < self.tracks.len() {
+                    Some(self.tracks[self.browse.selected_track].clone())
+                } else {
+                    None
+                }
+            }
+            ViewMode::Search => {
+                if let Some(ref results) = self.search_results {
+                    if self.search.tab == crate::ui::SearchTab::Tracks
+                        && self.search.selected_track < results.tracks.len()
+                    {
+                        Some(results.tracks[self.search.selected_track].clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 }
