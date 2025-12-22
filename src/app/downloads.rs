@@ -35,7 +35,7 @@ impl App {
                     None
                 }
             }
-            ViewMode::Downloads => None,
+            ViewMode::Downloads | ViewMode::ArtistDetail | ViewMode::AlbumDetail => None,
         };
 
         if let Some(track) = track {
@@ -73,7 +73,7 @@ impl App {
                     Vec::new()
                 }
             }
-            ViewMode::Downloads => Vec::new(),
+            ViewMode::Downloads | ViewMode::ArtistDetail | ViewMode::AlbumDetail => Vec::new(),
         };
 
         if !tracks.is_empty() {

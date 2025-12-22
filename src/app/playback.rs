@@ -73,7 +73,7 @@ impl App {
                     return Ok(());
                 }
             }
-            ViewMode::Downloads => return Ok(()),
+            ViewMode::Downloads | ViewMode::ArtistDetail | ViewMode::AlbumDetail => return Ok(()),
         };
 
         self.play_track(track).await

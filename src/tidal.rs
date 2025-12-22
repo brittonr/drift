@@ -1196,4 +1196,75 @@ impl TidalClient {
 
         Ok(vec![])
     }
+
+    /// Get albums for an artist (discography)
+    pub async fn get_artist_albums(&mut self, artist_id: u64) -> Result<Vec<Album>> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!("https://api.tidal.com/v1/artists/{}/albums", artist_id);
+
+                let response = self.http_client
+                    .get(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US"), ("limit", "50")])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        let json: Value = resp.json().await?;
+
+                        let albums = if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                            items.iter().filter_map(|item| {
+                                let id = item.get("id")?.as_u64()?.to_string();
+                                let title = item.get("title")?.as_str()?.to_string();
+
+                                let artist = item.get("artist")
+                                    .and_then(|a| a.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .or_else(|| {
+                                        item.get("artists")
+                                            .and_then(|a| a.as_array())
+                                            .and_then(|arr| arr.first())
+                                            .and_then(|a| a.get("name"))
+                                            .and_then(|n| n.as_str())
+                                    })
+                                    .unwrap_or("Unknown Artist")
+                                    .to_string();
+
+                                let num_tracks = item.get("numberOfTracks")
+                                    .and_then(|n| n.as_u64())
+                                    .unwrap_or(0) as u32;
+
+                                Some(Album {
+                                    id,
+                                    title,
+                                    artist,
+                                    num_tracks,
+                                })
+                            }).collect()
+                        } else {
+                            vec![]
+                        };
+
+                        return Ok(albums);
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        eprintln!("Artist albums request failed: {}", resp.status());
+                    }
+                    Err(e) => {
+                        eprintln!("Network error fetching artist albums: {}", e);
+                    }
+                }
+            }
+            break;
+        }
+
+        Ok(vec![])
+    }
 }

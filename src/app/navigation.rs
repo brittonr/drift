@@ -6,6 +6,19 @@ impl App {
     pub fn move_down(&mut self) {
         if self.playback.show_queue && !self.queue.is_empty() {
             self.playback.selected_queue_item = (self.playback.selected_queue_item + 1).min(self.queue.len() - 1);
+        } else if self.view_mode == ViewMode::ArtistDetail {
+            if self.artist_detail.selected_panel == 0 && !self.artist_detail.top_tracks.is_empty() {
+                self.artist_detail.selected_track = (self.artist_detail.selected_track + 1)
+                    .min(self.artist_detail.top_tracks.len() - 1);
+            } else if self.artist_detail.selected_panel == 1 && !self.artist_detail.albums.is_empty() {
+                self.artist_detail.selected_album = (self.artist_detail.selected_album + 1)
+                    .min(self.artist_detail.albums.len() - 1);
+            }
+        } else if self.view_mode == ViewMode::AlbumDetail {
+            if !self.album_detail.tracks.is_empty() {
+                self.album_detail.selected_track = (self.album_detail.selected_track + 1)
+                    .min(self.album_detail.tracks.len() - 1);
+            }
         } else if self.view_mode == ViewMode::Downloads {
             if !self.download_records.is_empty() {
                 self.downloads.selected = (self.downloads.selected + 1).min(self.download_records.len() - 1);
@@ -50,6 +63,16 @@ impl App {
             if self.playback.selected_queue_item > 0 {
                 self.playback.selected_queue_item -= 1;
             }
+        } else if self.view_mode == ViewMode::ArtistDetail {
+            if self.artist_detail.selected_panel == 0 && self.artist_detail.selected_track > 0 {
+                self.artist_detail.selected_track -= 1;
+            } else if self.artist_detail.selected_panel == 1 && self.artist_detail.selected_album > 0 {
+                self.artist_detail.selected_album -= 1;
+            }
+        } else if self.view_mode == ViewMode::AlbumDetail {
+            if self.album_detail.selected_track > 0 {
+                self.album_detail.selected_track -= 1;
+            }
         } else if self.view_mode == ViewMode::Downloads {
             if self.downloads.selected > 0 {
                 self.downloads.selected -= 1;
@@ -93,6 +116,9 @@ impl App {
         if self.view_mode == ViewMode::Browse && self.browse.selected_tab > 0 {
             self.browse.selected_tab = 0;
             self.add_debug("Switched to playlists panel".to_string());
+        } else if self.view_mode == ViewMode::ArtistDetail && self.artist_detail.selected_panel > 0 {
+            self.artist_detail.selected_panel = 0;
+            self.add_debug("Switched to top tracks panel".to_string());
         }
     }
 
@@ -100,12 +126,23 @@ impl App {
         if self.view_mode == ViewMode::Browse && self.browse.selected_tab < 1 {
             self.browse.selected_tab = 1;
             self.add_debug("Switched to tracks panel".to_string());
+        } else if self.view_mode == ViewMode::ArtistDetail && self.artist_detail.selected_panel < 1 {
+            self.artist_detail.selected_panel = 1;
+            self.add_debug("Switched to albums panel".to_string());
         }
     }
 
     pub fn jump_to_top(&mut self) {
         if self.playback.show_queue {
             self.playback.selected_queue_item = 0;
+        } else if self.view_mode == ViewMode::ArtistDetail {
+            if self.artist_detail.selected_panel == 0 {
+                self.artist_detail.selected_track = 0;
+            } else {
+                self.artist_detail.selected_album = 0;
+            }
+        } else if self.view_mode == ViewMode::AlbumDetail {
+            self.album_detail.selected_track = 0;
         } else if self.view_mode == ViewMode::Browse {
             if self.browse.selected_tab == 0 {
                 self.browse.selected_playlist = 0;
@@ -124,6 +161,16 @@ impl App {
     pub fn jump_to_end(&mut self) {
         if self.playback.show_queue && !self.queue.is_empty() {
             self.playback.selected_queue_item = self.queue.len() - 1;
+        } else if self.view_mode == ViewMode::ArtistDetail {
+            if self.artist_detail.selected_panel == 0 && !self.artist_detail.top_tracks.is_empty() {
+                self.artist_detail.selected_track = self.artist_detail.top_tracks.len() - 1;
+            } else if self.artist_detail.selected_panel == 1 && !self.artist_detail.albums.is_empty() {
+                self.artist_detail.selected_album = self.artist_detail.albums.len() - 1;
+            }
+        } else if self.view_mode == ViewMode::AlbumDetail {
+            if !self.album_detail.tracks.is_empty() {
+                self.album_detail.selected_track = self.album_detail.tracks.len() - 1;
+            }
         } else if self.view_mode == ViewMode::Browse {
             if self.browse.selected_tab == 0 && !self.playlists.is_empty() {
                 self.browse.selected_playlist = self.playlists.len() - 1;

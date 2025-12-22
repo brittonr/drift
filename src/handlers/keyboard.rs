@@ -150,7 +150,13 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
 
         // Y: yank all
         KeyCode::Char('Y') => {
-            if let Err(e) = app.add_all_tracks_to_queue().await {
+            if app.view_mode == ViewMode::AlbumDetail {
+                if let Err(e) = app.add_album_detail_tracks_to_queue().await {
+                    app.add_debug(format!("Failed to add tracks: {}", e));
+                } else {
+                    app.playback.queue_dirty = true;
+                }
+            } else if let Err(e) = app.add_all_tracks_to_queue().await {
                 app.add_debug(format!("Failed to add tracks: {}", e));
             } else {
                 app.playback.queue_dirty = true;
@@ -317,6 +323,19 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             }
         }
 
+        // v: view detail (open artist/album detail view)
+        KeyCode::Char('v') => {
+            handle_view_detail(app).await;
+        }
+
+        // Esc: back navigation for detail views
+        KeyCode::Esc => {
+            if app.view_mode == ViewMode::ArtistDetail || app.view_mode == ViewMode::AlbumDetail {
+                app.pop_view();
+                app.add_debug("Back to previous view".to_string());
+            }
+        }
+
         _ => {}
     }
 
@@ -328,6 +347,35 @@ async fn handle_enter(app: &mut App) {
         app.add_debug(format!("Playing from queue position {}", app.playback.selected_queue_item + 1));
         if let Err(e) = app.mpd_controller.play_position(app.playback.selected_queue_item, &mut app.debug_log).await {
             app.add_debug(format!("Failed to play from queue: {}", e));
+        }
+    } else if app.view_mode == ViewMode::ArtistDetail {
+        if app.artist_detail.selected_panel == 0 {
+            // Play selected top track
+            if app.artist_detail.selected_track < app.artist_detail.top_tracks.len() {
+                let track = app.artist_detail.top_tracks[app.artist_detail.selected_track].clone();
+                if let Err(e) = app.play_track(track).await {
+                    app.add_debug(format!("Error playing track: {}", e));
+                }
+            }
+        } else {
+            // Queue entire album
+            if app.artist_detail.selected_album < app.artist_detail.albums.len() {
+                let album = app.artist_detail.albums[app.artist_detail.selected_album].clone();
+                app.add_debug(format!("Adding album to queue: {}", album.title));
+                if let Err(e) = app.add_album_by_id(&album.id).await {
+                    app.add_debug(format!("Error adding album: {}", e));
+                } else {
+                    app.playback.queue_dirty = true;
+                }
+            }
+        }
+    } else if app.view_mode == ViewMode::AlbumDetail {
+        // Play selected track
+        if app.album_detail.selected_track < app.album_detail.tracks.len() {
+            let track = app.album_detail.tracks[app.album_detail.selected_track].clone();
+            if let Err(e) = app.play_track(track).await {
+                app.add_debug(format!("Error playing track: {}", e));
+            }
         }
     } else if app.view_mode == ViewMode::Browse {
         if app.browse.selected_tab == 0 {
@@ -365,7 +413,39 @@ async fn handle_enter(app: &mut App) {
 }
 
 async fn handle_yank(app: &mut App) {
-    if app.view_mode == ViewMode::Search {
+    if app.view_mode == ViewMode::ArtistDetail {
+        if app.artist_detail.selected_panel == 0 {
+            // Add selected top track to queue
+            if app.artist_detail.selected_track < app.artist_detail.top_tracks.len() {
+                let track = app.artist_detail.top_tracks[app.artist_detail.selected_track].clone();
+                if let Err(e) = app.add_track_to_queue(track).await {
+                    app.add_debug(format!("Failed to add track: {}", e));
+                } else {
+                    app.playback.queue_dirty = true;
+                }
+            }
+        } else {
+            // Add all album tracks to queue
+            if app.artist_detail.selected_album < app.artist_detail.albums.len() {
+                let album = app.artist_detail.albums[app.artist_detail.selected_album].clone();
+                if let Err(e) = app.add_album_by_id(&album.id).await {
+                    app.add_debug(format!("Failed to add album: {}", e));
+                } else {
+                    app.playback.queue_dirty = true;
+                }
+            }
+        }
+    } else if app.view_mode == ViewMode::AlbumDetail {
+        // Add selected track to queue
+        if app.album_detail.selected_track < app.album_detail.tracks.len() {
+            let track = app.album_detail.tracks[app.album_detail.selected_track].clone();
+            if let Err(e) = app.add_track_to_queue(track).await {
+                app.add_debug(format!("Failed to add track: {}", e));
+            } else {
+                app.playback.queue_dirty = true;
+            }
+        }
+    } else if app.view_mode == ViewMode::Search {
         match app.search.tab {
             SearchTab::Tracks => {
                 if let Err(e) = app.add_selected_track_to_queue().await {
@@ -401,6 +481,34 @@ async fn handle_play(app: &mut App) {
         app.add_debug(format!("Playing from queue position {}", app.playback.selected_queue_item + 1));
         if let Err(e) = app.mpd_controller.play_position(app.playback.selected_queue_item, &mut app.debug_log).await {
             app.add_debug(format!("Failed to play from queue: {}", e));
+        }
+    } else if app.view_mode == ViewMode::ArtistDetail {
+        if app.artist_detail.selected_panel == 0 {
+            // Play selected top track
+            if app.artist_detail.selected_track < app.artist_detail.top_tracks.len() {
+                let track = app.artist_detail.top_tracks[app.artist_detail.selected_track].clone();
+                if let Err(e) = app.play_track(track).await {
+                    app.add_debug(format!("Error playing track: {}", e));
+                }
+            }
+        } else {
+            // Queue and play album
+            if app.artist_detail.selected_album < app.artist_detail.albums.len() {
+                let album = app.artist_detail.albums[app.artist_detail.selected_album].clone();
+                if let Err(e) = app.add_album_by_id(&album.id).await {
+                    app.add_debug(format!("Error adding album: {}", e));
+                } else {
+                    app.playback.queue_dirty = true;
+                }
+            }
+        }
+    } else if app.view_mode == ViewMode::AlbumDetail {
+        // Play selected track
+        if app.album_detail.selected_track < app.album_detail.tracks.len() {
+            let track = app.album_detail.tracks[app.album_detail.selected_track].clone();
+            if let Err(e) = app.play_track(track).await {
+                app.add_debug(format!("Error playing track: {}", e));
+            }
         }
     } else if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 1 {
         if let Err(e) = app.play_selected_track().await {
@@ -453,6 +561,10 @@ fn handle_tab(app: &mut App) {
         app.browse.selected_tab = (app.browse.selected_tab + 1) % 2;
         app.add_debug(format!("Switched to {} panel",
             if app.browse.selected_tab == 0 { "playlists" } else { "tracks" }));
+    } else if app.view_mode == ViewMode::ArtistDetail {
+        app.artist_detail.selected_panel = (app.artist_detail.selected_panel + 1) % 2;
+        app.add_debug(format!("Switched to {} panel",
+            if app.artist_detail.selected_panel == 0 { "top tracks" } else { "albums" }));
     } else if app.view_mode == ViewMode::Library {
         app.library.tab = match app.library.tab {
             LibraryTab::Tracks => LibraryTab::Albums,
@@ -467,5 +579,74 @@ fn handle_tab(app: &mut App) {
             SearchTab::Artists => SearchTab::Tracks,
         };
         app.add_debug(format!("Switched to {:?} results", app.search.tab));
+    }
+}
+
+async fn handle_view_detail(app: &mut App) {
+    match app.view_mode {
+        ViewMode::Search => {
+            if let Some(ref results) = app.search_results {
+                match app.search.tab {
+                    SearchTab::Artists => {
+                        if app.search.selected_artist < results.artists.len() {
+                            let artist = results.artists[app.search.selected_artist].clone();
+                            app.add_debug(format!("Opening artist: {}", artist.name));
+                            app.push_view(ViewMode::ArtistDetail);
+                            app.load_artist_detail(artist).await;
+                        }
+                    }
+                    SearchTab::Albums => {
+                        if app.search.selected_album < results.albums.len() {
+                            let album = results.albums[app.search.selected_album].clone();
+                            app.add_debug(format!("Opening album: {}", album.title));
+                            app.push_view(ViewMode::AlbumDetail);
+                            app.load_album_detail(album).await;
+                        }
+                    }
+                    _ => {
+                        app.add_debug("Use 'v' on Artists or Albums tab".to_string());
+                    }
+                }
+            }
+        }
+        ViewMode::Library => {
+            match app.library.tab {
+                LibraryTab::Artists => {
+                    if app.library.selected_artist < app.favorite_artists.len() {
+                        let artist = app.favorite_artists[app.library.selected_artist].clone();
+                        app.add_debug(format!("Opening artist: {}", artist.name));
+                        app.push_view(ViewMode::ArtistDetail);
+                        app.load_artist_detail(artist).await;
+                    }
+                }
+                LibraryTab::Albums => {
+                    if app.library.selected_album < app.favorite_albums.len() {
+                        let album = app.favorite_albums[app.library.selected_album].clone();
+                        app.add_debug(format!("Opening album: {}", album.title));
+                        app.push_view(ViewMode::AlbumDetail);
+                        app.load_album_detail(album).await;
+                    }
+                }
+                _ => {
+                    app.add_debug("Use 'v' on Artists or Albums tab".to_string());
+                }
+            }
+        }
+        ViewMode::ArtistDetail => {
+            // From artist detail, 'v' on an album opens album detail
+            if app.artist_detail.selected_panel == 1 {
+                if app.artist_detail.selected_album < app.artist_detail.albums.len() {
+                    let album = app.artist_detail.albums[app.artist_detail.selected_album].clone();
+                    app.add_debug(format!("Opening album: {}", album.title));
+                    app.push_view(ViewMode::AlbumDetail);
+                    app.load_album_detail(album).await;
+                }
+            } else {
+                app.add_debug("Switch to albums panel (h/l) to view album details".to_string());
+            }
+        }
+        _ => {
+            app.add_debug("Use 'v' in Search or Library view on artists/albums".to_string());
+        }
     }
 }

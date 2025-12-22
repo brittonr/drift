@@ -1,5 +1,6 @@
 use ratatui::layout::Rect;
 
+use crate::tidal::{Album, Artist, Track};
 use crate::ui::{LibraryTab, SearchTab};
 
 #[derive(PartialEq, Clone, Copy)]
@@ -8,6 +9,8 @@ pub enum ViewMode {
     Search,
     Downloads,
     Library,
+    ArtistDetail,
+    AlbumDetail,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -98,4 +101,23 @@ impl Default for PlaybackState {
 pub struct KeyState {
     pub pending_key: Option<char>,
     pub space_pressed: bool,
+}
+
+/// Artist detail view state
+#[derive(Default)]
+pub struct ArtistDetailState {
+    pub artist: Option<Artist>,
+    pub top_tracks: Vec<Track>,
+    pub albums: Vec<Album>,
+    pub selected_track: usize,
+    pub selected_album: usize,
+    pub selected_panel: usize, // 0 = top tracks, 1 = albums
+}
+
+/// Album detail view state
+#[derive(Default)]
+pub struct AlbumDetailState {
+    pub album: Option<Album>,
+    pub tracks: Vec<Track>,
+    pub selected_track: usize,
 }

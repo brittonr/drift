@@ -6,6 +6,8 @@ pub mod search;
 pub mod downloads;
 pub mod library;
 pub mod status_bar;
+pub mod artist_detail;
+pub mod album_detail;
 
 pub use now_playing::render_now_playing;
 pub use visualizer::render_visualizer;
@@ -15,3 +17,5 @@ pub use search::{render_search_view, SearchTab};
 pub use downloads::render_downloads_view;
 pub use library::{render_library_view, LibraryTab};
 pub use status_bar::render_status_bar;
+pub use artist_detail::render_artist_detail_view;
+pub use album_detail::render_album_detail_view;

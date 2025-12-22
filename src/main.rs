@@ -30,6 +30,7 @@ use handlers::{handle_key_event, KeyAction};
 use ui::{
     render_now_playing, render_visualizer, render_queue, render_browse_view,
     render_search_view, render_downloads_view, render_library_view, render_status_bar,
+    render_artist_detail_view, render_album_detail_view,
 };
 
 #[tokio::main]
@@ -157,6 +158,8 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             ViewMode::Search => "Search",
             ViewMode::Downloads => "Downloads",
             ViewMode::Library => "Library",
+            ViewMode::ArtistDetail => "Artist",
+            ViewMode::AlbumDetail => "Album",
         }
     );
 
@@ -316,6 +319,29 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
             };
             app.clickable_areas.left_list = None;
             let right = render_library_view(f, &library_state, area);
+            app.clickable_areas.right_list = Some(right);
+        }
+        ViewMode::ArtistDetail => {
+            let artist_state = ui::artist_detail::ArtistDetailViewState {
+                artist: app.artist_detail.artist.as_ref(),
+                top_tracks: &app.artist_detail.top_tracks,
+                albums: &app.artist_detail.albums,
+                selected_track: app.artist_detail.selected_track,
+                selected_album: app.artist_detail.selected_album,
+                selected_panel: app.artist_detail.selected_panel,
+            };
+            let (left, right) = render_artist_detail_view(f, &artist_state, area);
+            app.clickable_areas.left_list = Some(left);
+            app.clickable_areas.right_list = Some(right);
+        }
+        ViewMode::AlbumDetail => {
+            let album_state = ui::album_detail::AlbumDetailViewState {
+                album: app.album_detail.album.as_ref(),
+                tracks: &app.album_detail.tracks,
+                selected_track: app.album_detail.selected_track,
+            };
+            app.clickable_areas.left_list = None;
+            let right = render_album_detail_view(f, &album_state, area);
             app.clickable_areas.right_list = Some(right);
         }
     }

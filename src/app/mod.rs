@@ -19,8 +19,8 @@ use crate::tidal::{Album, Artist, Playlist, SearchResults, TidalClient, Track};
 use crate::downloads::{DownloadEvent, DownloadManager};
 
 pub use state::{
-    BrowseState, ClickableAreas, DownloadsState, KeyState, LibraryState,
-    PlaybackState, SearchState, ViewMode,
+    AlbumDetailState, ArtistDetailState, BrowseState, ClickableAreas, DownloadsState,
+    KeyState, LibraryState, PlaybackState, SearchState, ViewMode,
 };
 
 pub struct App {
@@ -71,6 +71,11 @@ pub struct App {
     pub favorite_tracks: Vec<Track>,
     pub favorite_albums: Vec<Album>,
     pub favorite_artists: Vec<Artist>,
+
+    // Artist/Album detail views
+    pub artist_detail: ArtistDetailState,
+    pub album_detail: AlbumDetailState,
+    pub navigation_history: Vec<ViewMode>,
 
     // Configuration
     pub config: Config,
@@ -230,6 +235,9 @@ impl App {
             favorite_tracks: Vec::new(),
             favorite_albums: Vec::new(),
             favorite_artists: Vec::new(),
+            artist_detail: ArtistDetailState::default(),
+            album_detail: AlbumDetailState::default(),
+            navigation_history: Vec::new(),
             config,
         })
     }
@@ -429,6 +437,72 @@ impl App {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Push current view to navigation history and switch to new view
+    pub fn push_view(&mut self, new_mode: ViewMode) {
+        self.navigation_history.push(self.view_mode);
+        self.view_mode = new_mode;
+    }
+
+    /// Pop from navigation history and restore previous view
+    pub fn pop_view(&mut self) {
+        if let Some(previous) = self.navigation_history.pop() {
+            self.view_mode = previous;
+        }
+    }
+
+    /// Load artist detail data
+    pub async fn load_artist_detail(&mut self, artist: Artist) {
+        self.artist_detail.artist = Some(artist.clone());
+        self.artist_detail.selected_track = 0;
+        self.artist_detail.selected_album = 0;
+        self.artist_detail.selected_panel = 0;
+        self.artist_detail.top_tracks.clear();
+        self.artist_detail.albums.clear();
+
+        self.add_debug(format!("Loading artist: {}", artist.name));
+
+        // Fetch top tracks
+        match self.tidal_client.get_artist_top_tracks(artist.id).await {
+            Ok(tracks) => {
+                self.add_debug(format!("Loaded {} top tracks", tracks.len()));
+                self.artist_detail.top_tracks = tracks;
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load top tracks: {}", e));
+            }
+        }
+
+        // Fetch albums
+        match self.tidal_client.get_artist_albums(artist.id).await {
+            Ok(albums) => {
+                self.add_debug(format!("Loaded {} albums", albums.len()));
+                self.artist_detail.albums = albums;
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load albums: {}", e));
+            }
+        }
+    }
+
+    /// Load album detail data
+    pub async fn load_album_detail(&mut self, album: Album) {
+        self.album_detail.album = Some(album.clone());
+        self.album_detail.selected_track = 0;
+        self.album_detail.tracks.clear();
+
+        self.add_debug(format!("Loading album: {} - {}", album.artist, album.title));
+
+        match self.tidal_client.get_album_tracks(&album.id).await {
+            Ok(tracks) => {
+                self.add_debug(format!("Loaded {} tracks", tracks.len()));
+                self.album_detail.tracks = tracks;
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load album tracks: {}", e));
+            }
         }
     }
 }

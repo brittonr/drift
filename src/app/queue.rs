@@ -285,6 +285,105 @@ impl App {
         Ok(())
     }
 
+    /// Add album tracks to queue by album ID (used from detail views)
+    pub async fn add_album_by_id(&mut self, album_id: &str) -> Result<()> {
+        let tracks = match self.tidal_client.get_album_tracks(album_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                self.add_debug(format!("Failed to get album tracks: {}", e));
+                return Ok(());
+            }
+        };
+
+        if tracks.is_empty() {
+            self.add_debug("No tracks found for album".to_string());
+            return Ok(());
+        }
+
+        self.add_debug(format!("Adding {} tracks from album...", tracks.len()));
+
+        let was_playing = self.mpd_controller.get_status(&mut self.debug_log).await?.is_playing;
+        let mut added_count = 0;
+
+        for track in &tracks {
+            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+                Ok(url) => {
+                    if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
+                        self.add_debug(format!("Failed to add {}: {}", track.title, e));
+                    } else {
+                        self.local_queue.push(track.clone());
+                        added_count += 1;
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
+                }
+            }
+        }
+
+        self.add_debug(format!("Added {}/{} tracks from album", added_count, tracks.len()));
+
+        if let Ok(queue) = self.mpd_controller.get_queue().await {
+            self.queue = queue;
+        }
+
+        if !was_playing && added_count > 0 {
+            if let Err(e) = self.mpd_controller.play(&mut self.debug_log).await {
+                self.add_debug(format!("Play failed: {}", e));
+            } else {
+                self.playback.is_playing = true;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Add all tracks from album detail view to queue
+    pub async fn add_album_detail_tracks_to_queue(&mut self) -> Result<()> {
+        if self.album_detail.tracks.is_empty() {
+            self.add_debug("No tracks in album detail".to_string());
+            return Ok(());
+        }
+
+        let tracks = self.album_detail.tracks.clone();
+        self.add_debug(format!("Adding {} tracks from album...", tracks.len()));
+
+        let was_playing = self.mpd_controller.get_status(&mut self.debug_log).await?.is_playing;
+        let mut added_count = 0;
+
+        for track in &tracks {
+            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+                Ok(url) => {
+                    if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
+                        self.add_debug(format!("Failed to add {}: {}", track.title, e));
+                    } else {
+                        self.local_queue.push(track.clone());
+                        added_count += 1;
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
+                }
+            }
+        }
+
+        self.add_debug(format!("Added {}/{} tracks", added_count, tracks.len()));
+
+        if let Ok(queue) = self.mpd_controller.get_queue().await {
+            self.queue = queue;
+        }
+
+        if !was_playing && added_count > 0 {
+            if let Err(e) = self.mpd_controller.play(&mut self.debug_log).await {
+                self.add_debug(format!("Play failed: {}", e));
+            } else {
+                self.playback.is_playing = true;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn add_artist_to_queue(&mut self) -> Result<()> {
         let artist = if let Some(ref results) = self.search_results {
             if self.search.tab == SearchTab::Artists && self.search.selected_artist < results.artists.len() {
