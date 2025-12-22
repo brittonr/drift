@@ -5,6 +5,7 @@ mod album_art;
 mod queue_persistence;
 mod download_db;
 mod downloads;
+mod config;
 
 use anyhow::Result;
 use crossterm::{
