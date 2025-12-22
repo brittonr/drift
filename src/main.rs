@@ -6,13 +6,13 @@ mod queue_persistence;
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
@@ -34,6 +34,14 @@ enum SearchTab {
     Tracks,
     Albums,
     Artists,
+}
+
+#[derive(Default, Clone, Copy)]
+struct ClickableAreas {
+    left_list: Option<Rect>,   // Playlists or search results
+    right_list: Option<Rect>,  // Tracks
+    queue_list: Option<Rect>,  // Queue panel
+    progress_bar: Option<Rect>, // Progress bar for seeking
 }
 
 struct App {
@@ -84,6 +92,9 @@ struct App {
     // Queue persistence
     queue_dirty: bool,  // Track if queue needs saving
     pending_restore: Option<queue_persistence::PersistedQueue>,  // Queue to restore on first tick
+
+    // Mouse support
+    clickable_areas: ClickableAreas,
 }
 
 impl App {
@@ -198,6 +209,7 @@ impl App {
             space_pressed: false,
             queue_dirty: false,
             pending_restore,
+            clickable_areas: ClickableAreas::default(),
         })
     }
 
@@ -875,6 +887,98 @@ impl App {
             }
         }
     }
+
+    async fn handle_mouse_click(&mut self, col: u16, row: u16) {
+        // Check if click is in progress bar area for seeking
+        if let Some(progress_area) = self.clickable_areas.progress_bar {
+            if col >= progress_area.x
+                && col < progress_area.x + progress_area.width
+                && row >= progress_area.y
+                && row < progress_area.y + progress_area.height
+            {
+                // Calculate seek position based on click location
+                let click_offset = col - progress_area.x;
+                let progress_ratio = click_offset as f64 / progress_area.width as f64;
+
+                if let Some(ref song) = self.current_song {
+                    let seek_seconds = (song.duration.as_secs_f64() * progress_ratio) as u32;
+                    self.add_debug(format!("Seeking to {}s ({}%)", seek_seconds, (progress_ratio * 100.0) as u8));
+                    if let Err(e) = self.mpd_controller.seek_to(seek_seconds, &mut self.debug_log).await {
+                        self.add_debug(format!("Seek failed: {}", e));
+                    }
+                }
+                return;
+            }
+        }
+
+        // Check if click is in queue list
+        if let Some(queue_area) = self.clickable_areas.queue_list {
+            if col >= queue_area.x
+                && col < queue_area.x + queue_area.width
+                && row >= queue_area.y
+                && row < queue_area.y + queue_area.height
+            {
+                // Calculate which item was clicked (accounting for border)
+                let clicked_row = (row - queue_area.y).saturating_sub(1) as usize;
+                if clicked_row < self.local_queue.len() {
+                    self.selected_queue_item = clicked_row;
+                    self.add_debug(format!("Selected queue item {}", clicked_row + 1));
+                }
+                return;
+            }
+        }
+
+        // Check if click is in left list (playlists or search results tab 1)
+        if let Some(left_area) = self.clickable_areas.left_list {
+            if col >= left_area.x
+                && col < left_area.x + left_area.width
+                && row >= left_area.y
+                && row < left_area.y + left_area.height
+            {
+                let clicked_row = (row - left_area.y).saturating_sub(1) as usize;
+                if self.view_mode == ViewMode::Browse {
+                    self.selected_tab = 0;
+                    if clicked_row < self.playlists.len() {
+                        self.selected_playlist = clicked_row;
+                        self.add_debug(format!("Selected playlist {}", clicked_row + 1));
+                    }
+                }
+                return;
+            }
+        }
+
+        // Check if click is in right list (tracks or search results)
+        if let Some(right_area) = self.clickable_areas.right_list {
+            if col >= right_area.x
+                && col < right_area.x + right_area.width
+                && row >= right_area.y
+                && row < right_area.y + right_area.height
+            {
+                let clicked_row = (row - right_area.y).saturating_sub(1) as usize;
+                if self.view_mode == ViewMode::Browse {
+                    self.selected_tab = 1;
+                    if clicked_row < self.tracks.len() {
+                        self.selected_track = clicked_row;
+                        self.add_debug(format!("Selected track {}", clicked_row + 1));
+                    }
+                } else if let Some(ref results) = self.search_results {
+                    match self.search_tab {
+                        SearchTab::Tracks if clicked_row < results.tracks.len() => {
+                            self.selected_search_track = clicked_row;
+                        }
+                        SearchTab::Albums if clicked_row < results.albums.len() => {
+                            self.selected_search_album = clicked_row;
+                        }
+                        SearchTab::Artists if clicked_row < results.artists.len() => {
+                            self.selected_search_artist = clicked_row;
+                        }
+                        _ => {}
+                    }
+                }
+                return;
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -945,7 +1049,13 @@ async fn run_app<B: ratatui::backend::Backend>(
         terminal.draw(|f| ui(f, app))?;
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
+            match event::read()? {
+                Event::Mouse(mouse) => {
+                    if mouse.kind == MouseEventKind::Down(event::MouseButton::Left) {
+                        app.handle_mouse_click(mouse.column, mouse.row).await;
+                    }
+                }
+                Event::Key(key) => {
                 // Handle search input mode separately
                 if app.is_searching {
                     match key.code {
@@ -1312,6 +1422,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                     _ => {}
                 }
             }
+                _ => {}
+            }
         }
     }
 }
@@ -1401,6 +1513,9 @@ fn ui(f: &mut Frame, app: &mut App) {
         render_queue(f, app, content_chunks[1]);
     } else {
         // Full width for main content when queue is hidden
+        // Clear queue clickable area since it's not visible
+        app.clickable_areas.queue_list = None;
+
         if app.view_mode == ViewMode::Browse {
             render_browse_view(f, app, content_area);
         } else {
@@ -1635,13 +1750,25 @@ fn render_now_playing(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect)
 
         // Calculate progress bar width based on available space
         // Account for time stamps and padding
-        let bar_width = area.width.saturating_sub(20).max(40) as usize;
+        let bar_width = info_area.width.saturating_sub(20).max(40) as usize;
         let filled = (progress * bar_width as f64) as usize;
         let empty = bar_width.saturating_sub(filled);
 
         // Use Unicode block characters for smooth progress bar
         let filled_str = "━".repeat(filled);
         let empty_str = "─".repeat(empty);
+
+        // Store progress bar clickable area for mouse seeking
+        // Progress bar is on line 5 (index 4) of the now playing panel
+        // Offset: border(1) + "   "(3) + "MM:SS"(5) + " "(1) = 10 chars
+        let progress_bar_x = info_area.x + 10;
+        let progress_bar_y = info_area.y + 5; // Line 5 within the panel (1 border + 4 content lines)
+        app.clickable_areas.progress_bar = Some(Rect::new(
+            progress_bar_x,
+            progress_bar_y,
+            bar_width as u16,
+            1,
+        ));
 
         // Progress bar line with owned strings
         lines.push(Line::from(vec![
@@ -1687,7 +1814,9 @@ fn render_now_playing(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect)
         ]));
 
     } else {
-        // No track playing
+        // No track playing - clear progress bar clickable area
+        app.clickable_areas.progress_bar = None;
+
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("   No track playing", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
@@ -1732,7 +1861,10 @@ fn render_now_playing(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect)
     f.render_widget(now_playing, info_area);
 }
 
-fn render_queue(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_queue(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    // Store queue list area for mouse click handling
+    app.clickable_areas.queue_list = Some(area);
+
     if app.local_queue.is_empty() {
         // Show empty queue message
         let empty_msg = Paragraph::new("Queue is empty\n\nPress 'y' to add selected track\nPress 'Y' to add all tracks")
@@ -1794,11 +1926,15 @@ fn render_queue(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     );
 }
 
-fn render_browse_view(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_browse_view(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(35), Constraint::Percentage(65)].as_ref())
         .split(area);
+
+    // Store clickable areas for mouse handling
+    app.clickable_areas.left_list = Some(content_chunks[0]);
+    app.clickable_areas.right_list = Some(content_chunks[1]);
 
     // Left panel - Playlists
     let playlists: Vec<ListItem> = app
@@ -1859,11 +1995,16 @@ fn render_browse_view(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     f.render_widget(tracks_widget, content_chunks[1]);
 }
 
-fn render_search_view(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_search_view(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     let search_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
         .split(area);
+
+    // Store clickable area for search results (use right_list for consistency)
+    app.clickable_areas.right_list = Some(search_chunks[1]);
+    // Clear left_list in search mode
+    app.clickable_areas.left_list = None;
 
     // Search input box
     let search_input = Paragraph::new(app.search_query.as_str())
