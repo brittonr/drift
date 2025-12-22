@@ -133,7 +133,7 @@ async fn handle_search_input(app: &mut App, key: KeyEvent) -> KeyAction {
         KeyCode::Enter => {
             app.search.is_active = false;
             if let Err(e) = app.search().await {
-                app.add_debug(format!("Search error: {}", e));
+                app.set_status_error(format!("Search error: {}", e));
             }
         }
         KeyCode::Esc => {
@@ -163,19 +163,19 @@ async fn handle_space_command(app: &mut App, key: KeyEvent) -> KeyAction {
         }
         KeyCode::Char('p') => {
             if let Err(e) = app.toggle_playback().await {
-                app.add_debug(format!("Error toggling playback: {}", e));
+                app.set_status_error(format!("Error toggling playback: {}", e));
             }
         }
         KeyCode::Char('n') => {
             app.add_debug("Next track".to_string());
             if let Err(e) = app.mpd_controller.next(&mut app.debug_log).await {
-                app.add_debug(format!("Next failed: {}", e));
+                app.set_status_error(format!("Next failed: {}", e));
             }
         }
         KeyCode::Char('b') => {
             app.add_debug("Previous track".to_string());
             if let Err(e) = app.mpd_controller.previous(&mut app.debug_log).await {
-                app.add_debug(format!("Previous failed: {}", e));
+                app.set_status_error(format!("Previous failed: {}", e));
             }
         }
         KeyCode::Char('v') => {
@@ -194,7 +194,7 @@ async fn handle_space_command(app: &mut App, key: KeyEvent) -> KeyAction {
                 content.push('\n');
             }
             if let Err(e) = std::fs::write(export_path, content) {
-                app.add_debug(format!("Failed to export log: {}", e));
+                app.set_status_error(format!("Failed to export log: {}", e));
             } else {
                 app.add_debug(format!("Debug log exported to {}", export_path));
             }
@@ -251,12 +251,12 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
         KeyCode::Char('Y') => {
             if app.view_mode == ViewMode::AlbumDetail {
                 if let Err(e) = app.add_album_detail_tracks_to_queue().await {
-                    app.add_debug(format!("Failed to add tracks: {}", e));
+                    app.set_status_error(format!("Failed to add tracks: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
             } else if let Err(e) = app.add_all_tracks_to_queue().await {
-                app.add_debug(format!("Failed to add tracks: {}", e));
+                app.set_status_error(format!("Failed to add tracks: {}", e));
             } else {
                 app.playback.queue_dirty = true;
             }
@@ -275,7 +275,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
         // D: clear entire queue
         KeyCode::Char('D') => {
             if let Err(e) = app.mpd_controller.clear_queue(&mut app.debug_log).await {
-                app.add_debug(format!("Failed to clear queue: {}", e));
+                app.set_status_error(format!("Failed to clear queue: {}", e));
             } else {
                 app.queue.clear();
                 app.local_queue.clear();
@@ -318,7 +318,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                         app.add_debug(format!("Queue loaded: {} tracks", app.queue.len()));
                     }
                     Err(e) => {
-                        app.add_debug(format!("Failed to load queue: {}", e));
+                        app.set_status_error(format!("Failed to load queue: {}", e));
                     }
                 }
             }
@@ -333,24 +333,24 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
         // Volume controls
         KeyCode::Char('=') | KeyCode::Char('+') => {
             if let Err(e) = app.mpd_controller.volume_up(&mut app.debug_log).await {
-                app.add_debug(format!("Volume error: {}", e));
+                app.set_status_error(format!("Volume error: {}", e));
             }
         }
         KeyCode::Char('-') | KeyCode::Char('_') => {
             if let Err(e) = app.mpd_controller.volume_down(&mut app.debug_log).await {
-                app.add_debug(format!("Volume error: {}", e));
+                app.set_status_error(format!("Volume error: {}", e));
             }
         }
 
         // Seek controls
-        KeyCode::Char('>') | KeyCode::Char('.') => {
+        KeyCode::Char('>') | KeyCode::Char('.') | KeyCode::Char(']') => {
             if let Err(e) = app.mpd_controller.seek_forward(&mut app.debug_log).await {
-                app.add_debug(format!("Seek error: {}", e));
+                app.set_status_error(format!("Seek error: {}", e));
             }
         }
-        KeyCode::Char('<') | KeyCode::Char(',') => {
+        KeyCode::Char('<') | KeyCode::Char(',') | KeyCode::Char('[') => {
             if let Err(e) = app.mpd_controller.seek_backward(&mut app.debug_log).await {
-                app.add_debug(format!("Seek error: {}", e));
+                app.set_status_error(format!("Seek error: {}", e));
             }
         }
 
@@ -361,18 +361,18 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 app.add_debug("Refreshing favorites...".to_string());
             } else {
                 if let Err(e) = app.mpd_controller.toggle_repeat(&mut app.debug_log).await {
-                    app.add_debug(format!("Repeat toggle error: {}", e));
+                    app.set_status_error(format!("Repeat toggle error: {}", e));
                 }
             }
         }
         KeyCode::Char('s') => {
             if let Err(e) = app.mpd_controller.toggle_random(&mut app.debug_log).await {
-                app.add_debug(format!("Shuffle toggle error: {}", e));
+                app.set_status_error(format!("Shuffle toggle error: {}", e));
             }
         }
         KeyCode::Char('1') => {
             if let Err(e) = app.mpd_controller.toggle_single(&mut app.debug_log).await {
-                app.add_debug(format!("Single toggle error: {}", e));
+                app.set_status_error(format!("Single toggle error: {}", e));
             }
         }
 
@@ -659,7 +659,7 @@ async fn handle_enter(app: &mut App) {
     if app.playback.show_queue && !app.local_queue.is_empty() && app.playback.selected_queue_item < app.local_queue.len() {
         app.add_debug(format!("Playing from queue position {}", app.playback.selected_queue_item + 1));
         if let Err(e) = app.mpd_controller.play_position(app.playback.selected_queue_item, &mut app.debug_log).await {
-            app.add_debug(format!("Failed to play from queue: {}", e));
+            app.set_status_error(format!("Failed to play from queue: {}", e));
         }
     } else if app.view_mode == ViewMode::ArtistDetail {
         if app.artist_detail.selected_panel == 0 {
@@ -667,7 +667,7 @@ async fn handle_enter(app: &mut App) {
             if app.artist_detail.selected_track < app.artist_detail.top_tracks.len() {
                 let track = app.artist_detail.top_tracks[app.artist_detail.selected_track].clone();
                 if let Err(e) = app.play_track(track).await {
-                    app.add_debug(format!("Error playing track: {}", e));
+                    app.set_status_error(format!("Error playing track: {}", e));
                 }
             }
         } else {
@@ -676,7 +676,7 @@ async fn handle_enter(app: &mut App) {
                 let album = app.artist_detail.albums[app.artist_detail.selected_album].clone();
                 app.add_debug(format!("Adding album to queue: {}", album.title));
                 if let Err(e) = app.add_album_by_id(&album.id).await {
-                    app.add_debug(format!("Error adding album: {}", e));
+                    app.set_status_error(format!("Error adding album: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
@@ -687,36 +687,36 @@ async fn handle_enter(app: &mut App) {
         if app.album_detail.selected_track < app.album_detail.tracks.len() {
             let track = app.album_detail.tracks[app.album_detail.selected_track].clone();
             if let Err(e) = app.play_track(track).await {
-                app.add_debug(format!("Error playing track: {}", e));
+                app.set_status_error(format!("Error playing track: {}", e));
             }
         }
     } else if app.view_mode == ViewMode::Browse {
         if app.browse.selected_tab == 0 {
             if let Err(e) = app.load_playlist(app.browse.selected_playlist).await {
-                app.add_debug(format!("Error loading playlist: {}", e));
+                app.set_status_error(format!("Error loading playlist: {}", e));
             }
         } else if app.browse.selected_tab == 1 {
             if let Err(e) = app.play_selected_track().await {
-                app.add_debug(format!("Error playing track: {}", e));
+                app.set_status_error(format!("Error playing track: {}", e));
             }
         }
     } else if app.view_mode == ViewMode::Search {
         match app.search.tab {
             SearchTab::Tracks => {
                 if let Err(e) = app.play_selected_track().await {
-                    app.add_debug(format!("Error playing track: {}", e));
+                    app.set_status_error(format!("Error playing track: {}", e));
                 }
             }
             SearchTab::Albums => {
                 if let Err(e) = app.add_album_to_queue().await {
-                    app.add_debug(format!("Error adding album: {}", e));
+                    app.set_status_error(format!("Error adding album: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
             }
             SearchTab::Artists => {
                 if let Err(e) = app.add_artist_to_queue().await {
-                    app.add_debug(format!("Error adding artist: {}", e));
+                    app.set_status_error(format!("Error adding artist: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
@@ -732,7 +732,7 @@ async fn handle_yank(app: &mut App) {
             if app.artist_detail.selected_track < app.artist_detail.top_tracks.len() {
                 let track = app.artist_detail.top_tracks[app.artist_detail.selected_track].clone();
                 if let Err(e) = app.add_track_to_queue(track).await {
-                    app.add_debug(format!("Failed to add track: {}", e));
+                    app.set_status_error(format!("Failed to add track: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
@@ -742,7 +742,7 @@ async fn handle_yank(app: &mut App) {
             if app.artist_detail.selected_album < app.artist_detail.albums.len() {
                 let album = app.artist_detail.albums[app.artist_detail.selected_album].clone();
                 if let Err(e) = app.add_album_by_id(&album.id).await {
-                    app.add_debug(format!("Failed to add album: {}", e));
+                    app.set_status_error(format!("Failed to add album: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
@@ -753,7 +753,7 @@ async fn handle_yank(app: &mut App) {
         if app.album_detail.selected_track < app.album_detail.tracks.len() {
             let track = app.album_detail.tracks[app.album_detail.selected_track].clone();
             if let Err(e) = app.add_track_to_queue(track).await {
-                app.add_debug(format!("Failed to add track: {}", e));
+                app.set_status_error(format!("Failed to add track: {}", e));
             } else {
                 app.playback.queue_dirty = true;
             }
@@ -762,21 +762,21 @@ async fn handle_yank(app: &mut App) {
         match app.search.tab {
             SearchTab::Tracks => {
                 if let Err(e) = app.add_selected_track_to_queue().await {
-                    app.add_debug(format!("Failed to add track: {}", e));
+                    app.set_status_error(format!("Failed to add track: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
             }
             SearchTab::Albums => {
                 if let Err(e) = app.add_album_to_queue().await {
-                    app.add_debug(format!("Failed to add album: {}", e));
+                    app.set_status_error(format!("Failed to add album: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
             }
             SearchTab::Artists => {
                 if let Err(e) = app.add_artist_to_queue().await {
-                    app.add_debug(format!("Failed to add artist: {}", e));
+                    app.set_status_error(format!("Failed to add artist: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
@@ -787,13 +787,13 @@ async fn handle_yank(app: &mut App) {
         if app.library.selected_history < app.history_entries.len() {
             let track = crate::tidal::Track::from(&app.history_entries[app.library.selected_history]);
             if let Err(e) = app.add_track_to_queue(track).await {
-                app.add_debug(format!("Failed to add track: {}", e));
+                app.set_status_error(format!("Failed to add track: {}", e));
             } else {
                 app.playback.queue_dirty = true;
             }
         }
     } else if let Err(e) = app.add_selected_track_to_queue().await {
-        app.add_debug(format!("Failed to add track: {}", e));
+        app.set_status_error(format!("Failed to add track: {}", e));
     } else {
         app.playback.queue_dirty = true;
     }
@@ -803,7 +803,7 @@ async fn handle_play(app: &mut App) {
     if app.playback.show_queue && !app.local_queue.is_empty() && app.playback.selected_queue_item < app.local_queue.len() {
         app.add_debug(format!("Playing from queue position {}", app.playback.selected_queue_item + 1));
         if let Err(e) = app.mpd_controller.play_position(app.playback.selected_queue_item, &mut app.debug_log).await {
-            app.add_debug(format!("Failed to play from queue: {}", e));
+            app.set_status_error(format!("Failed to play from queue: {}", e));
         }
     } else if app.view_mode == ViewMode::ArtistDetail {
         if app.artist_detail.selected_panel == 0 {
@@ -811,7 +811,7 @@ async fn handle_play(app: &mut App) {
             if app.artist_detail.selected_track < app.artist_detail.top_tracks.len() {
                 let track = app.artist_detail.top_tracks[app.artist_detail.selected_track].clone();
                 if let Err(e) = app.play_track(track).await {
-                    app.add_debug(format!("Error playing track: {}", e));
+                    app.set_status_error(format!("Error playing track: {}", e));
                 }
             }
         } else {
@@ -819,7 +819,7 @@ async fn handle_play(app: &mut App) {
             if app.artist_detail.selected_album < app.artist_detail.albums.len() {
                 let album = app.artist_detail.albums[app.artist_detail.selected_album].clone();
                 if let Err(e) = app.add_album_by_id(&album.id).await {
-                    app.add_debug(format!("Error adding album: {}", e));
+                    app.set_status_error(format!("Error adding album: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
@@ -830,30 +830,30 @@ async fn handle_play(app: &mut App) {
         if app.album_detail.selected_track < app.album_detail.tracks.len() {
             let track = app.album_detail.tracks[app.album_detail.selected_track].clone();
             if let Err(e) = app.play_track(track).await {
-                app.add_debug(format!("Error playing track: {}", e));
+                app.set_status_error(format!("Error playing track: {}", e));
             }
         }
     } else if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 1 {
         if let Err(e) = app.play_selected_track().await {
-            app.add_debug(format!("Error playing track: {}", e));
+            app.set_status_error(format!("Error playing track: {}", e));
         }
     } else if app.view_mode == ViewMode::Search {
         match app.search.tab {
             SearchTab::Tracks => {
                 if let Err(e) = app.play_selected_track().await {
-                    app.add_debug(format!("Error playing track: {}", e));
+                    app.set_status_error(format!("Error playing track: {}", e));
                 }
             }
             SearchTab::Albums => {
                 if let Err(e) = app.add_album_to_queue().await {
-                    app.add_debug(format!("Error adding album: {}", e));
+                    app.set_status_error(format!("Error adding album: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
             }
             SearchTab::Artists => {
                 if let Err(e) = app.add_artist_to_queue().await {
-                    app.add_debug(format!("Error adding artist: {}", e));
+                    app.set_status_error(format!("Error adding artist: {}", e));
                 } else {
                     app.playback.queue_dirty = true;
                 }
@@ -866,7 +866,7 @@ async fn handle_delete(app: &mut App) {
     if app.playback.show_queue && !app.local_queue.is_empty() {
         if app.playback.selected_queue_item < app.local_queue.len() {
             if let Err(e) = app.mpd_controller.remove_from_queue(app.playback.selected_queue_item, &mut app.debug_log).await {
-                app.add_debug(format!("Failed to remove track: {}", e));
+                app.set_status_error(format!("Failed to remove track: {}", e));
             } else {
                 app.local_queue.remove(app.playback.selected_queue_item);
                 if app.playback.selected_queue_item > 0 && app.playback.selected_queue_item >= app.local_queue.len() {
@@ -900,7 +900,7 @@ async fn handle_queue_move_up(app: &mut App) {
         .move_in_queue(selected, target, &mut app.debug_log)
         .await
     {
-        app.add_debug(format!("Failed to move track up: {}", e));
+        app.set_status_error(format!("Failed to move track up: {}", e));
         return;
     }
 
@@ -938,7 +938,7 @@ async fn handle_queue_move_down(app: &mut App) {
         .move_in_queue(selected, target, &mut app.debug_log)
         .await
     {
-        app.add_debug(format!("Failed to move track down: {}", e));
+        app.set_status_error(format!("Failed to move track down: {}", e));
         return;
     }
 

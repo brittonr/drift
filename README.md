@@ -51,15 +51,6 @@ Tidal API → tidal-tui → MPD → Audio Output
               rmpc (optional control)
 ```
 
-## TODO
-
-- [ ] Actual Tidal API integration (currently mock data)
-- [ ] Search functionality
-- [ ] Album art in terminal
-- [ ] Queue management
-- [ ] Playlist creation/editing
-- [ ] Offline cache support
-
 ## Why This Exists
 
 Because all the other options suck:

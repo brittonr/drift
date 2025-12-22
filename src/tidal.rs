@@ -111,6 +111,7 @@ struct AlbumResponse {
 pub struct TidalClient {
     pub config: Option<TidalConfig>,
     http_client: HttpClient,
+    audio_quality: String,
 }
 
 impl TidalClient {
@@ -138,7 +139,22 @@ impl TidalClient {
 
         let http_client = HttpClient::new();
 
-        Ok(Self { config, http_client })
+        Ok(Self {
+            config,
+            http_client,
+            audio_quality: "HIGH".to_string(),
+        })
+    }
+
+    pub fn set_audio_quality(&mut self, quality: &str) {
+        self.audio_quality = match quality.to_lowercase().as_str() {
+            "low" => "LOW",
+            "high" => "HIGH",
+            "lossless" => "LOSSLESS",
+            "master" | "hifi" | "hi_res" => "HI_RES",
+            _ => "HIGH",
+        }
+        .to_string();
     }
 
     fn config_path() -> Result<PathBuf> {
@@ -368,8 +384,8 @@ impl TidalClient {
                     .header(header::AUTHORIZATION, format!("Bearer {}", token))
                     .query(&[
                         ("countryCode", "US"),
-                        ("assetpresentation", "FULL"),  // Required parameter (lowercase!)
-                        ("audioquality", "HIGH"),
+                        ("assetpresentation", "FULL"),
+                        ("audioquality", self.audio_quality.as_str()),
                         ("playbackmode", "STREAM"),
                     ])
                     .send()
@@ -439,8 +455,8 @@ impl TidalClient {
                                 .header(header::AUTHORIZATION, format!("Bearer {}", token))
                                 .query(&[
                                     ("countryCode", "US"),
-                                    ("soundQuality", "HIGH"),
-                                    ("assetpresentation", "FULL"),  // lowercase!
+                                    ("soundQuality", self.audio_quality.as_str()),
+                                    ("assetpresentation", "FULL"),
                                 ])
                                 .send()
                                 .await;

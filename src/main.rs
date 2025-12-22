@@ -103,6 +103,7 @@ async fn run_app<B: ratatui::backend::Backend>(
         }
 
         app.handle_download_events();
+        app.clear_expired_status();
 
         terminal.draw(|f| render_ui(f, app))?;
 
@@ -259,6 +260,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         is_searching: app.search.is_active,
         space_pressed: app.key_state.space_pressed,
         pending_key: app.key_state.pending_key,
+        status_message: app.status_message.as_ref().map(|m| (m.message.clone(), m.is_error)),
     };
     render_status_bar(f, &status_state, main_chunks[chunk_index]);
 

@@ -71,7 +71,7 @@ pub const KEYBINDING_CATEGORIES: &[KeybindingCategory] = &[
                 description: "Volume up/down",
             },
             Keybinding {
-                keys: "</> or ,/.",
+                keys: "[/] or </> or ,/.",
                 description: "Seek backward/forward",
             },
         ],

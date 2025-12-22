@@ -9,6 +9,7 @@ pub struct StatusBarState {
     pub is_searching: bool,
     pub space_pressed: bool,
     pub pending_key: Option<char>,
+    pub status_message: Option<(String, bool)>, // (message, is_error)
 }
 
 pub fn render_status_bar(
@@ -16,7 +17,17 @@ pub fn render_status_bar(
     state: &StatusBarState,
     area: ratatui::layout::Rect,
 ) {
-    let status_bar = if state.is_searching {
+    let status_bar = if let Some((ref msg, is_error)) = state.status_message {
+        let color = if is_error { Color::Red } else { Color::Yellow };
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                if is_error { "ERROR" } else { "INFO" },
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": "),
+            Span::styled(msg.as_str(), Style::default().fg(color)),
+        ]))
+    } else if state.is_searching {
         Paragraph::new(Line::from(vec![
             Span::styled("INSERT MODE", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" | "),

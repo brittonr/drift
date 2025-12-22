@@ -1,7 +1,15 @@
 use ratatui::layout::Rect;
+use std::time::Instant;
 
 use crate::tidal::{Album, Artist, Track};
 use crate::ui::{LibraryTab, SearchTab};
+
+/// Status message for display in the status bar
+pub struct StatusMessage {
+    pub message: String,
+    pub is_error: bool,
+    pub timestamp: Instant,
+}
 
 #[derive(Clone)]
 pub enum RadioSeed {

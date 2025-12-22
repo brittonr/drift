@@ -21,7 +21,8 @@ use crate::downloads::{DownloadEvent, DownloadManager};
 
 pub use state::{
     AlbumDetailState, ArtistDetailState, BrowseState, ClickableAreas, DialogMode, DialogState,
-    DownloadsState, HelpState, KeyState, LibraryState, PlaybackState, SearchState, ViewMode,
+    DownloadsState, HelpState, KeyState, LibraryState, PlaybackState, SearchState, StatusMessage,
+    ViewMode,
 };
 
 pub struct App {
@@ -91,6 +92,9 @@ pub struct App {
 
     // Playlist dialogs
     pub dialog: DialogState,
+
+    // Status bar message (for displaying errors/info)
+    pub status_message: Option<StatusMessage>,
 }
 
 impl App {
@@ -115,6 +119,7 @@ impl App {
         // Initialize Tidal client
         debug_log.push_back("Initializing Tidal client...".to_string());
         let mut tidal_client = TidalClient::new().await?;
+        tidal_client.set_audio_quality(&config.playback.audio_quality);
 
         if tidal_client.config.is_some() {
             debug_log.push_back("Tidal credentials loaded".to_string());
@@ -269,6 +274,7 @@ impl App {
             show_help: false,
             help: HelpState::default(),
             dialog: DialogState::default(),
+            status_message: None,
         })
     }
 
@@ -286,6 +292,31 @@ impl App {
         self.debug_log.push_back(msg);
         while self.debug_log.len() > 100 {
             self.debug_log.pop_front();
+        }
+    }
+
+    pub fn set_status_error(&mut self, msg: String) {
+        self.status_message = Some(StatusMessage {
+            message: msg.clone(),
+            is_error: true,
+            timestamp: std::time::Instant::now(),
+        });
+        self.add_debug(msg);
+    }
+
+    pub fn set_status_info(&mut self, msg: String) {
+        self.status_message = Some(StatusMessage {
+            message: msg,
+            is_error: false,
+            timestamp: std::time::Instant::now(),
+        });
+    }
+
+    pub fn clear_expired_status(&mut self) {
+        if let Some(ref msg) = self.status_message {
+            if msg.timestamp.elapsed() > std::time::Duration::from_secs(5) {
+                self.status_message = None;
+            }
         }
     }
 
