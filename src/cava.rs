@@ -1,7 +1,9 @@
 use std::process::{Command, Stdio, Child};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use anyhow::Result;
+use anyhow::{Result, Context};
+use std::fs;
+use std::path::PathBuf;
 
 pub struct CavaVisualizer {
     bars: Arc<Mutex<Vec<u8>>>,
@@ -18,6 +20,52 @@ impl CavaVisualizer {
         })
     }
 
+    /// Get the cava config file path, creating default config if needed
+    fn get_config_path() -> Result<PathBuf> {
+        // Use XDG config directory
+        let config_dir = dirs::config_dir()
+            .context("Failed to get config directory")?
+            .join("tidal-tui");
+
+        fs::create_dir_all(&config_dir)
+            .context("Failed to create config directory")?;
+
+        let config_path = config_dir.join("cava_config");
+
+        // Create default config if it doesn't exist
+        if !config_path.exists() {
+            let default_config = r#"# Cava config for Tidal TUI with MPD
+
+[general]
+bars = 20
+bar_width = 1
+bar_spacing = 0
+framerate = 30
+
+[input]
+method = pulse
+source = auto
+
+[output]
+method = raw
+raw_target = /dev/stdout
+data_format = binary
+bit_format = 8bit
+channels = mono
+
+[color]
+# Colors not used in raw output mode
+
+[smoothing]
+noise_reduction = 77
+"#;
+            fs::write(&config_path, default_config)
+                .context("Failed to create default cava config")?;
+        }
+
+        Ok(config_path)
+    }
+
     pub fn start(&mut self) -> Result<()> {
         // Start cava process
         let bars_clone = Arc::clone(&self.bars);
@@ -26,9 +74,12 @@ impl CavaVisualizer {
         let cava_cmd = which::which("cava")
             .unwrap_or_else(|_| std::path::PathBuf::from("cava"));
 
+        // Get cava config path (creates default if needed)
+        let config_path = Self::get_config_path()?;
+
         let mut child = Command::new(cava_cmd)
             .arg("-p")
-            .arg("/home/brittonr/git/tidal-tui/cava_config")
+            .arg(&config_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?;
