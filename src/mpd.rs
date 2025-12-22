@@ -627,6 +627,40 @@ impl MpdController {
         Ok(())
     }
 
+    /// Get the number of remaining tracks in the queue (after current position)
+    pub async fn get_remaining_queue_count(&mut self) -> Result<usize> {
+        let status_output = self.mpc_cmd().arg("status").output()?;
+        let status_str = String::from_utf8_lossy(&status_output.stdout);
+
+        // Get queue length
+        let playlist_output = self.mpc_cmd().arg("playlist").output()?;
+        let playlist_str = String::from_utf8_lossy(&playlist_output.stdout);
+        let queue_len = playlist_str.lines().count();
+
+        if queue_len == 0 {
+            return Ok(0);
+        }
+
+        // Parse current position from status
+        // Format: "[playing] #1/5   0:45/3:20 (22%)"
+        for line in status_str.lines() {
+            if line.contains("[playing]") || line.contains("[paused]") {
+                if let Some(pos_part) = line.split('#').nth(1) {
+                    if let Some(pos_str) = pos_part.split('/').next() {
+                        if let Ok(pos) = pos_str.parse::<usize>() {
+                            // pos is 1-indexed, queue_len is count
+                            // remaining = total - current position
+                            return Ok(queue_len.saturating_sub(pos));
+                        }
+                    }
+                }
+            }
+        }
+
+        // If not playing, all tracks are "remaining"
+        Ok(queue_len)
+    }
+
     // Remove track from queue by position
     pub async fn remove_from_queue(&mut self, position: usize, debug_log: &mut VecDeque<String>) -> Result<()> {
         let output = self.mpc_cmd()

@@ -296,6 +296,18 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
         KeyCode::Char('R') => {
             if app.view_mode == ViewMode::Downloads {
                 app.retry_selected_download();
+            } else {
+                // Toggle radio mode
+                app.playback.radio_mode = !app.playback.radio_mode;
+                if app.playback.radio_mode {
+                    if let Some(ref track) = app.current_track {
+                        app.playback.radio_seed_track = Some(track.id);
+                    }
+                    app.add_debug("Radio mode ON".to_string());
+                } else {
+                    app.playback.radio_seed_track = None;
+                    app.add_debug("Radio mode OFF".to_string());
+                }
             }
         }
 

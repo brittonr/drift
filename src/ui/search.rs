@@ -1,7 +1,7 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -66,15 +66,9 @@ pub fn render_search_view(
                 let items: Vec<ListItem> = results
                     .tracks
                     .iter()
-                    .enumerate()
-                    .map(|(i, track)| {
-                        let style = if i == state.selected_search_track {
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                        };
+                    .map(|track| {
                         let display = TidalClient::format_track_display(track);
-                        ListItem::new(display).style(style)
+                        ListItem::new(display)
                     })
                     .collect();
 
@@ -84,22 +78,22 @@ pub fn render_search_view(
                             .borders(Borders::ALL)
                             .title(format!("Tracks ({}) [Tab: cycle results | p: play | y: add]", results.tracks.len()))
                             .border_style(Style::default().fg(Color::Cyan)),
-                    );
-                f.render_widget(list, results_area);
+                    )
+                    .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                    .highlight_symbol("> ");
+                f.render_stateful_widget(
+                    list,
+                    results_area,
+                    &mut ListState::default().with_selected(Some(state.selected_search_track)),
+                );
             }
             SearchTab::Albums => {
                 let items: Vec<ListItem> = results
                     .albums
                     .iter()
-                    .enumerate()
-                    .map(|(i, album)| {
-                        let style = if i == state.selected_search_album {
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                        };
+                    .map(|album| {
                         let display = format!("{} - {} ({} tracks)", album.artist, album.title, album.num_tracks);
-                        ListItem::new(display).style(style)
+                        ListItem::new(display)
                     })
                     .collect();
 
@@ -109,21 +103,21 @@ pub fn render_search_view(
                             .borders(Borders::ALL)
                             .title(format!("Albums ({}) [Tab: cycle results]", results.albums.len()))
                             .border_style(Style::default().fg(Color::Magenta)),
-                    );
-                f.render_widget(list, results_area);
+                    )
+                    .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                    .highlight_symbol("> ");
+                f.render_stateful_widget(
+                    list,
+                    results_area,
+                    &mut ListState::default().with_selected(Some(state.selected_search_album)),
+                );
             }
             SearchTab::Artists => {
                 let items: Vec<ListItem> = results
                     .artists
                     .iter()
-                    .enumerate()
-                    .map(|(i, artist)| {
-                        let style = if i == state.selected_search_artist {
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                        };
-                        ListItem::new(artist.name.clone()).style(style)
+                    .map(|artist| {
+                        ListItem::new(artist.name.clone())
                     })
                     .collect();
 
@@ -133,8 +127,14 @@ pub fn render_search_view(
                             .borders(Borders::ALL)
                             .title(format!("Artists ({}) [Tab: cycle results]", results.artists.len()))
                             .border_style(Style::default().fg(Color::Green)),
-                    );
-                f.render_widget(list, results_area);
+                    )
+                    .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                    .highlight_symbol("> ");
+                f.render_stateful_widget(
+                    list,
+                    results_area,
+                    &mut ListState::default().with_selected(Some(state.selected_search_artist)),
+                );
             }
         }
     } else {

@@ -80,6 +80,9 @@ pub struct PlaybackState {
     pub selected_queue_item: usize,
     pub show_queue: bool,
     pub queue_dirty: bool,
+    pub radio_mode: bool,
+    pub radio_seed_track: Option<u64>,
+    pub radio_fetching: bool,
 }
 
 impl Default for PlaybackState {
@@ -93,6 +96,9 @@ impl Default for PlaybackState {
             selected_queue_item: 0,
             show_queue: false,
             queue_dirty: false,
+            radio_mode: false,
+            radio_seed_track: None,
+            radio_fetching: false,
         }
     }
 }

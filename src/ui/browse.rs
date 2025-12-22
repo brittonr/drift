@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
 
@@ -35,18 +35,12 @@ pub fn render_browse_view(
     let playlists: Vec<ListItem> = state
         .playlists
         .iter()
-        .enumerate()
-        .map(|(i, playlist)| {
-            let style = if i == state.selected_playlist && state.selected_tab == 0 {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+        .map(|playlist| {
             let mut display = TidalClient::format_playlist_display(playlist);
             if state.synced_playlist_ids.contains(&playlist.id) {
                 display = format!("[S] {}", display);
             }
-            ListItem::new(display).style(style)
+            ListItem::new(display)
         })
         .collect();
 
@@ -60,22 +54,28 @@ pub fn render_browse_view(
                 } else {
                     Style::default()
                 }),
-        );
-    f.render_widget(playlists_widget, left_area);
+        )
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_symbol("> ");
+
+    let selected_playlist = if state.selected_tab == 0 {
+        Some(state.selected_playlist)
+    } else {
+        None
+    };
+    f.render_stateful_widget(
+        playlists_widget,
+        left_area,
+        &mut ListState::default().with_selected(selected_playlist),
+    );
 
     // Right panel - Tracks
     let tracks: Vec<ListItem> = state
         .tracks
         .iter()
-        .enumerate()
-        .map(|(i, track)| {
-            let style = if i == state.selected_track && state.selected_tab == 1 {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+        .map(|track| {
             let display = TidalClient::format_track_display(track);
-            ListItem::new(display).style(style)
+            ListItem::new(display)
         })
         .collect();
 
@@ -89,8 +89,20 @@ pub fn render_browse_view(
                 } else {
                     Style::default()
                 }),
-        );
-    f.render_widget(tracks_widget, right_area);
+        )
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_symbol("> ");
+
+    let selected_track = if state.selected_tab == 1 {
+        Some(state.selected_track)
+    } else {
+        None
+    };
+    f.render_stateful_widget(
+        tracks_widget,
+        right_area,
+        &mut ListState::default().with_selected(selected_track),
+    );
 
     (left_area, right_area)
 }

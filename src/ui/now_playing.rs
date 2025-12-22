@@ -18,6 +18,7 @@ pub struct NowPlayingState<'a> {
     pub repeat_mode: bool,
     pub random_mode: bool,
     pub single_mode: bool,
+    pub radio_mode: bool,
     pub local_queue_len: usize,
     pub album_art_cache: &'a mut AlbumArtCache,
 }
@@ -158,6 +159,9 @@ pub fn render_now_playing(
         }
         if state.random_mode {
             modes.push("shuffle");
+        }
+        if state.radio_mode {
+            modes.push("radio");
         }
         let modes_str = if modes.is_empty() {
             String::new()

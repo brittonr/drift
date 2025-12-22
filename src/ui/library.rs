@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -114,15 +114,9 @@ pub fn render_library_view(
             let items: Vec<ListItem> = state
                 .favorite_tracks
                 .iter()
-                .enumerate()
-                .map(|(i, track)| {
-                    let style = if i == state.selected_favorite_track {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    };
+                .map(|track| {
                     let display = TidalClient::format_track_display(track);
-                    ListItem::new(display).style(style)
+                    ListItem::new(display)
                 })
                 .collect();
 
@@ -133,22 +127,22 @@ pub fn render_library_view(
                         .title(format!("Favorite Tracks ({}) [p: play | y: queue]", count))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Cyan)),
-                );
-            f.render_widget(list, content_area);
+                )
+                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .highlight_symbol("> ");
+            f.render_stateful_widget(
+                list,
+                content_area,
+                &mut ListState::default().with_selected(Some(state.selected_favorite_track)),
+            );
         }
         LibraryTab::Albums => {
             let items: Vec<ListItem> = state
                 .favorite_albums
                 .iter()
-                .enumerate()
-                .map(|(i, album)| {
-                    let style = if i == state.selected_favorite_album {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    };
+                .map(|album| {
                     let display = format!("{} - {} ({} tracks)", album.artist, album.title, album.num_tracks);
-                    ListItem::new(display).style(style)
+                    ListItem::new(display)
                 })
                 .collect();
 
@@ -159,21 +153,21 @@ pub fn render_library_view(
                         .title(format!("Favorite Albums ({}) [Enter: add to queue]", count))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Cyan)),
-                );
-            f.render_widget(list, content_area);
+                )
+                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .highlight_symbol("> ");
+            f.render_stateful_widget(
+                list,
+                content_area,
+                &mut ListState::default().with_selected(Some(state.selected_favorite_album)),
+            );
         }
         LibraryTab::Artists => {
             let items: Vec<ListItem> = state
                 .favorite_artists
                 .iter()
-                .enumerate()
-                .map(|(i, artist)| {
-                    let style = if i == state.selected_favorite_artist {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    };
-                    ListItem::new(artist.name.clone()).style(style)
+                .map(|artist| {
+                    ListItem::new(artist.name.clone())
                 })
                 .collect();
 
@@ -184,23 +178,23 @@ pub fn render_library_view(
                         .title(format!("Favorite Artists ({}) [Enter: add top tracks]", count))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Cyan)),
-                );
-            f.render_widget(list, content_area);
+                )
+                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .highlight_symbol("> ");
+            f.render_stateful_widget(
+                list,
+                content_area,
+                &mut ListState::default().with_selected(Some(state.selected_favorite_artist)),
+            );
         }
         LibraryTab::History => {
             let items: Vec<ListItem> = state
                 .history_entries
                 .iter()
-                .enumerate()
-                .map(|(i, entry)| {
-                    let style = if i == state.selected_history_entry {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    };
+                .map(|entry| {
                     let time_ago = format_time_ago(entry.played_at);
                     let display = format!("{} - {} [{}]", entry.artist, entry.title, time_ago);
-                    ListItem::new(display).style(style)
+                    ListItem::new(display)
                 })
                 .collect();
 
@@ -211,8 +205,14 @@ pub fn render_library_view(
                         .title(format!("Playback History ({}) [p: play | y: queue | f: favorite]", count))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Cyan)),
-                );
-            f.render_widget(list, content_area);
+                )
+                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .highlight_symbol("> ");
+            f.render_stateful_widget(
+                list,
+                content_area,
+                &mut ListState::default().with_selected(Some(state.selected_history_entry)),
+            );
         }
     }
 

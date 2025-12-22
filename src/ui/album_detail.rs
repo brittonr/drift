@@ -1,7 +1,7 @@
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
 
@@ -24,13 +24,6 @@ pub fn render_album_detail_view(f: &mut Frame, state: &AlbumDetailViewState, are
         .iter()
         .enumerate()
         .map(|(i, track)| {
-            let style = if i == state.selected_track {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
             // Show track number
             let display = format!(
                 "{}. {} ({}:{:02})",
@@ -39,7 +32,7 @@ pub fn render_album_detail_view(f: &mut Frame, state: &AlbumDetailViewState, are
                 track.duration_seconds / 60,
                 track.duration_seconds % 60
             );
-            ListItem::new(display).style(style)
+            ListItem::new(display)
         })
         .collect();
 
@@ -48,13 +41,20 @@ pub fn render_album_detail_view(f: &mut Frame, state: &AlbumDetailViewState, are
         album_info,
         state.tracks.len()
     );
-    let list = List::new(track_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .border_style(Style::default().fg(Color::Cyan)),
+    let list = List::new(track_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_symbol("> ");
+    f.render_stateful_widget(
+        list,
+        area,
+        &mut ListState::default().with_selected(Some(state.selected_track)),
     );
-    f.render_widget(list, area);
 
     area
 }

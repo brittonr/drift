@@ -144,6 +144,100 @@ impl App {
             }
         }
 
+        // Check if we need to add radio tracks
+        self.check_radio_queue().await;
+
         Ok(())
+    }
+
+    pub async fn check_radio_queue(&mut self) {
+        // Skip if radio mode is off or we're already fetching
+        if !self.playback.radio_mode || self.playback.radio_fetching {
+            return;
+        }
+
+        // Check remaining tracks in queue
+        let remaining = match self.mpd_controller.get_remaining_queue_count().await {
+            Ok(count) => count,
+            Err(e) => {
+                self.add_debug(format!("Radio: failed to get queue count: {}", e));
+                return;
+            }
+        };
+
+        // Only fetch when queue runs low (2 or fewer remaining tracks)
+        if remaining > 2 {
+            return;
+        }
+
+        // Get seed track ID (current track or last in local_queue)
+        let seed_track_id = if let Some(ref track) = self.current_track {
+            track.id
+        } else if let Some(track) = self.local_queue.last() {
+            track.id
+        } else {
+            self.add_debug("Radio: no seed track available".to_string());
+            return;
+        };
+
+        // Update seed and set fetching flag
+        self.playback.radio_seed_track = Some(seed_track_id);
+        self.playback.radio_fetching = true;
+
+        self.add_debug(format!("Radio: fetching similar tracks (seed: {})", seed_track_id));
+
+        // Fetch radio tracks
+        let radio_tracks = match self.tidal_client.get_track_radio(seed_track_id, 10).await {
+            Ok(tracks) => tracks,
+            Err(e) => {
+                self.add_debug(format!("Radio: failed to fetch tracks: {}", e));
+                self.playback.radio_fetching = false;
+                return;
+            }
+        };
+
+        if radio_tracks.is_empty() {
+            self.add_debug("Radio: no similar tracks found".to_string());
+            self.playback.radio_fetching = false;
+            return;
+        }
+
+        // Filter out duplicates (tracks already in local_queue)
+        let existing_ids: std::collections::HashSet<u64> = self.local_queue.iter().map(|t| t.id).collect();
+        let new_tracks: Vec<_> = radio_tracks
+            .into_iter()
+            .filter(|t| !existing_ids.contains(&t.id))
+            .collect();
+
+        if new_tracks.is_empty() {
+            self.add_debug("Radio: all tracks already in queue".to_string());
+            self.playback.radio_fetching = false;
+            return;
+        }
+
+        self.add_debug(format!("Radio: adding {} new tracks", new_tracks.len()));
+
+        // Add tracks to queue
+        let mut added = 0;
+        for track in new_tracks {
+            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+                Ok(url) => {
+                    if self.mpd_controller.add_track(&url, &mut self.debug_log).await.is_ok() {
+                        self.local_queue.push(track);
+                        added += 1;
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!("Radio: failed to get URL: {}", e));
+                }
+            }
+        }
+
+        if added > 0 {
+            self.add_debug(format!("Radio: added {} tracks to queue", added));
+            self.playback.queue_dirty = true;
+        }
+
+        self.playback.radio_fetching = false;
     }
 }

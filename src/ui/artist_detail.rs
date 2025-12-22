@@ -1,7 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
 
@@ -38,17 +38,7 @@ pub fn render_artist_detail_view(
     let track_items: Vec<ListItem> = state
         .top_tracks
         .iter()
-        .enumerate()
-        .map(|(i, track)| {
-            let style = if i == state.selected_track && state.selected_panel == 0 {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            ListItem::new(TidalClient::format_track_display(track)).style(style)
-        })
+        .map(|track| ListItem::new(TidalClient::format_track_display(track)))
         .collect();
 
     let tracks_title = format!(
@@ -56,33 +46,38 @@ pub fn render_artist_detail_view(
         artist_name,
         state.top_tracks.len()
     );
-    let tracks_widget = List::new(track_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(tracks_title)
-            .border_style(if state.selected_panel == 0 {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
-            }),
+    let tracks_widget = List::new(track_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(tracks_title)
+                .border_style(if state.selected_panel == 0 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                }),
+        )
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_symbol("> ");
+
+    let selected_track = if state.selected_panel == 0 {
+        Some(state.selected_track)
+    } else {
+        None
+    };
+    f.render_stateful_widget(
+        tracks_widget,
+        left_area,
+        &mut ListState::default().with_selected(selected_track),
     );
-    f.render_widget(tracks_widget, left_area);
 
     // Right panel - Albums/Discography
     let album_items: Vec<ListItem> = state
         .albums
         .iter()
-        .enumerate()
-        .map(|(i, album)| {
-            let style = if i == state.selected_album && state.selected_panel == 1 {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+        .map(|album| {
             let display = format!("{} ({} tracks)", album.title, album.num_tracks);
-            ListItem::new(display).style(style)
+            ListItem::new(display)
         })
         .collect();
 
@@ -90,17 +85,30 @@ pub fn render_artist_detail_view(
         "Discography ({}) [v: view | y: queue]",
         state.albums.len()
     );
-    let albums_widget = List::new(album_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(albums_title)
-            .border_style(if state.selected_panel == 1 {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
-            }),
+    let albums_widget = List::new(album_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(albums_title)
+                .border_style(if state.selected_panel == 1 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                }),
+        )
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_symbol("> ");
+
+    let selected_album = if state.selected_panel == 1 {
+        Some(state.selected_album)
+    } else {
+        None
+    };
+    f.render_stateful_widget(
+        albums_widget,
+        right_area,
+        &mut ListState::default().with_selected(selected_album),
     );
-    f.render_widget(albums_widget, right_area);
 
     (left_area, right_area)
 }
