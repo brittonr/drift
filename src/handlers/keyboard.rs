@@ -4,6 +4,7 @@ use crate::app::{App, ViewMode};
 use crate::app::state::RadioSeed;
 use crate::ui::library::LibraryTab;
 use crate::ui::search::SearchTab;
+use crate::ui::help_content_height;
 
 pub enum KeyAction {
     Continue,
@@ -11,6 +12,27 @@ pub enum KeyAction {
 }
 
 pub async fn handle_key_event(app: &mut App, key: KeyEvent) -> KeyAction {
+    // Handle help panel - any key dismisses it (except j/k for scrolling)
+    if app.show_help {
+        match key.code {
+            KeyCode::Char('j') => {
+                let max_scroll = help_content_height().saturating_sub(20);
+                if app.help.scroll_offset < max_scroll {
+                    app.help.scroll_offset += 1;
+                }
+            }
+            KeyCode::Char('k') => {
+                app.help.scroll_offset = app.help.scroll_offset.saturating_sub(1);
+            }
+            _ => {
+                // Any other key dismisses help
+                app.show_help = false;
+                app.help.scroll_offset = 0;
+            }
+        }
+        return KeyAction::Continue;
+    }
+
     // Handle search input mode separately
     if app.search.is_active {
         return handle_search_input(app, key).await;
@@ -184,6 +206,16 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 app.add_debug("Queue cleared".to_string());
                 app.playback.queue_dirty = true;
             }
+        }
+
+        // J: Move selected track down in queue
+        KeyCode::Char('J') => {
+            handle_queue_move_down(app).await;
+        }
+
+        // K: Move selected track up in queue
+        KeyCode::Char('K') => {
+            handle_queue_move_up(app).await;
         }
 
         // /: search
@@ -437,6 +469,12 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             }
         }
 
+        // ?: show help
+        KeyCode::Char('?') => {
+            app.show_help = true;
+            app.help.scroll_offset = 0;
+        }
+
         _ => {}
     }
 
@@ -665,6 +703,82 @@ async fn handle_delete(app: &mut App) {
             }
         }
     }
+}
+
+async fn handle_queue_move_up(app: &mut App) {
+    // Only works when queue is visible and has items
+    if !app.playback.show_queue || app.local_queue.is_empty() {
+        return;
+    }
+
+    let selected = app.playback.selected_queue_item;
+
+    // Can't move first item up
+    if selected == 0 {
+        return;
+    }
+
+    let target = selected - 1;
+
+    // Move in MPD first
+    if let Err(e) = app
+        .mpd_controller
+        .move_in_queue(selected, target, &mut app.debug_log)
+        .await
+    {
+        app.add_debug(format!("Failed to move track up: {}", e));
+        return;
+    }
+
+    // Update local queue
+    app.local_queue.swap(selected, target);
+
+    // Also update the QueueItem vec if populated
+    if !app.queue.is_empty() && selected < app.queue.len() && target < app.queue.len() {
+        app.queue.swap(selected, target);
+    }
+
+    // Move selection to follow the track
+    app.playback.selected_queue_item = target;
+    app.playback.queue_dirty = true;
+}
+
+async fn handle_queue_move_down(app: &mut App) {
+    // Only works when queue is visible and has items
+    if !app.playback.show_queue || app.local_queue.is_empty() {
+        return;
+    }
+
+    let selected = app.playback.selected_queue_item;
+
+    // Can't move last item down
+    if selected >= app.local_queue.len() - 1 {
+        return;
+    }
+
+    let target = selected + 1;
+
+    // Move in MPD first
+    if let Err(e) = app
+        .mpd_controller
+        .move_in_queue(selected, target, &mut app.debug_log)
+        .await
+    {
+        app.add_debug(format!("Failed to move track down: {}", e));
+        return;
+    }
+
+    // Update local queue
+    app.local_queue.swap(selected, target);
+
+    // Also update the QueueItem vec if populated
+    if !app.queue.is_empty() && selected < app.queue.len() && target < app.queue.len() {
+        app.queue.swap(selected, target);
+    }
+
+    // Move selection to follow the track
+    app.playback.selected_queue_item = target;
+    app.playback.queue_dirty = true;
 }
 
 fn handle_tab(app: &mut App) {

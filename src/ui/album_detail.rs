@@ -6,11 +6,13 @@ use ratatui::{
 };
 
 use crate::tidal::{Album, Track};
+use super::styles::{format_track_with_indicator, is_track_playing, track_style};
 
 pub struct AlbumDetailViewState<'a> {
     pub album: Option<&'a Album>,
     pub tracks: &'a [Track],
     pub selected_track: usize,
+    pub current_track_id: Option<u64>,
 }
 
 pub fn render_album_detail_view(f: &mut Frame, state: &AlbumDetailViewState, area: Rect) -> Rect {
@@ -24,6 +26,10 @@ pub fn render_album_detail_view(f: &mut Frame, state: &AlbumDetailViewState, are
         .iter()
         .enumerate()
         .map(|(i, track)| {
+            let is_selected = i == state.selected_track;
+            let is_playing = is_track_playing(track.id, state.current_track_id);
+            let style = track_style(is_selected, is_playing);
+
             // Show track number
             let display = format!(
                 "{}. {} ({}:{:02})",
@@ -32,7 +38,8 @@ pub fn render_album_detail_view(f: &mut Frame, state: &AlbumDetailViewState, are
                 track.duration_seconds / 60,
                 track.duration_seconds % 60
             );
-            ListItem::new(display)
+            let display = format_track_with_indicator(display, is_playing);
+            ListItem::new(display).style(style)
         })
         .collect();
 

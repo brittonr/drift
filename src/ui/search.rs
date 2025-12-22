@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use crate::tidal::{SearchResults, TidalClient};
+use super::styles::{format_track_with_indicator, is_track_playing, track_style};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum SearchTab {
@@ -22,6 +23,7 @@ pub struct SearchViewState<'a> {
     pub selected_search_album: usize,
     pub selected_search_artist: usize,
     pub is_searching: bool,
+    pub current_track_id: Option<u64>,
 }
 
 pub fn render_search_view(
@@ -66,9 +68,15 @@ pub fn render_search_view(
                 let items: Vec<ListItem> = results
                     .tracks
                     .iter()
-                    .map(|track| {
+                    .enumerate()
+                    .map(|(i, track)| {
+                        let is_selected = i == state.selected_search_track;
+                        let is_playing = is_track_playing(track.id, state.current_track_id);
+                        let style = track_style(is_selected, is_playing);
+
                         let display = TidalClient::format_track_display(track);
-                        ListItem::new(display)
+                        let display = format_track_with_indicator(display, is_playing);
+                        ListItem::new(display).style(style)
                     })
                     .collect();
 

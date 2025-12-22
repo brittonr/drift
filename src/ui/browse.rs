@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::tidal::{Playlist, TidalClient, Track};
+use super::styles::{format_track_with_indicator, is_track_playing, track_style};
 
 pub struct BrowseViewState<'a> {
     pub playlists: &'a [Playlist],
@@ -16,6 +17,7 @@ pub struct BrowseViewState<'a> {
     pub selected_track: usize,
     pub selected_tab: usize,
     pub synced_playlist_ids: HashSet<String>,
+    pub current_track_id: Option<u64>,
 }
 
 pub fn render_browse_view(
@@ -73,9 +75,15 @@ pub fn render_browse_view(
     let tracks: Vec<ListItem> = state
         .tracks
         .iter()
-        .map(|track| {
+        .enumerate()
+        .map(|(i, track)| {
+            let is_selected = state.selected_tab == 1 && i == state.selected_track;
+            let is_playing = is_track_playing(track.id, state.current_track_id);
+            let style = track_style(is_selected, is_playing);
+
             let display = TidalClient::format_track_display(track);
-            ListItem::new(display)
+            let display = format_track_with_indicator(display, is_playing);
+            ListItem::new(display).style(style)
         })
         .collect();
 

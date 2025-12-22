@@ -21,7 +21,7 @@ use crate::downloads::{DownloadEvent, DownloadManager};
 
 pub use state::{
     AlbumDetailState, ArtistDetailState, BrowseState, ClickableAreas, DownloadsState,
-    KeyState, LibraryState, PlaybackState, SearchState, ViewMode,
+    HelpState, KeyState, LibraryState, PlaybackState, SearchState, ViewMode,
 };
 
 pub struct App {
@@ -84,6 +84,10 @@ pub struct App {
 
     // Configuration
     pub config: Config,
+
+    // Help panel
+    pub show_help: bool,
+    pub help: HelpState,
 }
 
 impl App {
@@ -259,6 +263,8 @@ impl App {
             history_db,
             history_entries,
             config,
+            show_help: false,
+            help: HelpState::default(),
         })
     }
 

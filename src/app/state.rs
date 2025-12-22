@@ -140,3 +140,9 @@ pub struct AlbumDetailState {
     pub tracks: Vec<Track>,
     pub selected_track: usize,
 }
+
+/// Help panel state
+#[derive(Default)]
+pub struct HelpState {
+    pub scroll_offset: usize,
+}

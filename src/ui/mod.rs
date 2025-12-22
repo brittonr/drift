@@ -8,6 +8,9 @@ pub mod library;
 pub mod status_bar;
 pub mod artist_detail;
 pub mod album_detail;
+pub mod styles;
+pub mod keybindings;
+pub mod help;
 
 pub use now_playing::render_now_playing;
 pub use visualizer::render_visualizer;
@@ -19,3 +22,6 @@ pub use library::{render_library_view, LibraryTab};
 pub use status_bar::render_status_bar;
 pub use artist_detail::render_artist_detail_view;
 pub use album_detail::render_album_detail_view;
+pub use styles::{format_track_with_indicator, is_track_playing, track_style};
+pub use help::{render_help_panel, HelpPanelState};
+pub use keybindings::help_content_height;

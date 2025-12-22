@@ -677,6 +677,37 @@ impl MpdController {
 
         Ok(())
     }
+
+    /// Move a track in the queue from one position to another
+    /// MPD uses 1-based positions for mpc move
+    pub async fn move_in_queue(
+        &mut self,
+        from: usize,
+        to: usize,
+        debug_log: &mut VecDeque<String>,
+    ) -> Result<()> {
+        // Convert 0-indexed to 1-indexed for mpc
+        let from_pos = from + 1;
+        let to_pos = to + 1;
+
+        debug_log.push_back(format!("Executing: mpc move {} {}", from_pos, to_pos));
+
+        let output = self.mpc_cmd()
+            .arg("move")
+            .arg(from_pos.to_string())
+            .arg(to_pos.to_string())
+            .output()?;
+
+        if output.status.success() {
+            debug_log.push_back(format!("✓ Moved track from position {} to {}", from_pos, to_pos));
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to move track: {}", stderr));
+            return Err(anyhow::anyhow!("Failed to move track in MPD: {}", stderr));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug)]

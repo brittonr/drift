@@ -68,7 +68,9 @@ pub fn render_status_bar(
             Span::styled("s", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(": shuffle | "),
             Span::styled("Space", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(": cmd"),
+            Span::raw(": cmd | "),
+            Span::styled("?", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(": help"),
         ]))
     };
 

@@ -31,7 +31,7 @@ use handlers::{handle_key_event, KeyAction};
 use ui::{
     render_now_playing, render_visualizer, render_queue, render_browse_view,
     render_search_view, render_downloads_view, render_library_view, render_status_bar,
-    render_artist_detail_view, render_album_detail_view,
+    render_artist_detail_view, render_album_detail_view, render_help_panel, HelpPanelState,
 };
 
 #[tokio::main]
@@ -221,6 +221,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             f,
             &app.local_queue,
             app.playback.selected_queue_item,
+            app.current_track.as_ref().map(|t| t.id),
             content_chunks[1],
         );
         app.clickable_areas.queue_list = Some(queue_area);
@@ -259,9 +260,19 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         pending_key: app.key_state.pending_key,
     };
     render_status_bar(f, &status_state, main_chunks[chunk_index]);
+
+    // Render help panel as overlay (last, so it's on top)
+    if app.show_help {
+        let help_state = HelpPanelState {
+            scroll_offset: app.help.scroll_offset,
+        };
+        render_help_panel(f, &help_state, f.area());
+    }
 }
 
 fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    let current_track_id = app.current_track.as_ref().map(|t| t.id);
+
     match app.view_mode {
         ViewMode::Browse => {
             let synced_ids = app.get_synced_playlist_ids();
@@ -272,6 +283,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 selected_track: app.browse.selected_track,
                 selected_tab: app.browse.selected_tab,
                 synced_playlist_ids: synced_ids,
+                current_track_id,
             };
             let (left, right) = render_browse_view(f, &browse_state, area);
             app.clickable_areas.left_list = Some(left);
@@ -286,6 +298,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 selected_search_album: app.search.selected_album,
                 selected_search_artist: app.search.selected_artist,
                 is_searching: app.search.is_active,
+                current_track_id,
             };
             app.clickable_areas.left_list = None;
             let right = render_search_view(f, &search_state, area);
@@ -320,6 +333,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 selected_favorite_album: app.library.selected_album,
                 selected_favorite_artist: app.library.selected_artist,
                 selected_history_entry: app.library.selected_history,
+                current_track_id,
             };
             app.clickable_areas.left_list = None;
             let right = render_library_view(f, &library_state, area);
@@ -333,6 +347,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 selected_track: app.artist_detail.selected_track,
                 selected_album: app.artist_detail.selected_album,
                 selected_panel: app.artist_detail.selected_panel,
+                current_track_id,
             };
             let (left, right) = render_artist_detail_view(f, &artist_state, area);
             app.clickable_areas.left_list = Some(left);
@@ -343,6 +358,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 album: app.album_detail.album.as_ref(),
                 tracks: &app.album_detail.tracks,
                 selected_track: app.album_detail.selected_track,
+                current_track_id,
             };
             app.clickable_areas.left_list = None;
             let right = render_album_detail_view(f, &album_state, area);

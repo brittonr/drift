@@ -6,11 +6,13 @@ use ratatui::{
 };
 
 use crate::tidal::Track;
+use super::styles::{format_track_with_indicator, is_track_playing, track_style};
 
 pub fn render_queue(
     f: &mut Frame,
     local_queue: &[Track],
     selected_queue_item: usize,
+    current_track_id: Option<u64>,
     area: Rect,
 ) -> Rect {
     if local_queue.is_empty() {
@@ -31,11 +33,9 @@ pub fn render_queue(
     let mut items = vec![];
 
     for (i, track) in local_queue.iter().enumerate() {
-        let style = if i == selected_queue_item {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
+        let is_selected = i == selected_queue_item;
+        let is_playing = is_track_playing(track.id, current_track_id);
+        let style = track_style(is_selected, is_playing);
 
         let duration_str = format!("{}:{:02}", track.duration_seconds / 60, track.duration_seconds % 60);
 
@@ -47,7 +47,8 @@ pub fn render_queue(
             duration_str
         );
 
-        items.push(ListItem::new(content).style(style));
+        let display = format_track_with_indicator(content, is_playing);
+        items.push(ListItem::new(display).style(style));
     }
 
     let queue_list = List::new(items)

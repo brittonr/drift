@@ -9,6 +9,7 @@ use ratatui::{
 
 use crate::history_db::HistoryEntry;
 use crate::tidal::{Album, Artist, TidalClient, Track};
+use super::styles::{format_track_with_indicator, is_track_playing, track_style};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum LibraryTab {
@@ -28,6 +29,7 @@ pub struct LibraryViewState<'a> {
     pub selected_favorite_album: usize,
     pub selected_favorite_artist: usize,
     pub selected_history_entry: usize,
+    pub current_track_id: Option<u64>,
 }
 
 fn format_time_ago(played_at: DateTime<Utc>) -> String {
@@ -114,9 +116,15 @@ pub fn render_library_view(
             let items: Vec<ListItem> = state
                 .favorite_tracks
                 .iter()
-                .map(|track| {
+                .enumerate()
+                .map(|(i, track)| {
+                    let is_selected = i == state.selected_favorite_track;
+                    let is_playing = is_track_playing(track.id, state.current_track_id);
+                    let style = track_style(is_selected, is_playing);
+
                     let display = TidalClient::format_track_display(track);
-                    ListItem::new(display)
+                    let display = format_track_with_indicator(display, is_playing);
+                    ListItem::new(display).style(style)
                 })
                 .collect();
 
@@ -191,10 +199,16 @@ pub fn render_library_view(
             let items: Vec<ListItem> = state
                 .history_entries
                 .iter()
-                .map(|entry| {
+                .enumerate()
+                .map(|(i, entry)| {
+                    let is_selected = i == state.selected_history_entry;
+                    let is_playing = is_track_playing(entry.track_id, state.current_track_id);
+                    let style = track_style(is_selected, is_playing);
+
                     let time_ago = format_time_ago(entry.played_at);
                     let display = format!("{} - {} [{}]", entry.artist, entry.title, time_ago);
-                    ListItem::new(display)
+                    let display = format_track_with_indicator(display, is_playing);
+                    ListItem::new(display).style(style)
                 })
                 .collect();
 
