@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
 
-use crate::tidal::Track;
+use crate::tidal::{Track, Playlist};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DownloadStatus {
@@ -82,6 +82,15 @@ impl From<&DownloadRecord> for Track {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SyncedPlaylist {
+    pub playlist_id: String,
+    pub name: String,
+    pub track_count: usize,
+    pub synced_count: usize,
+    pub last_synced: Option<String>,
+}
+
 pub struct DownloadDb {
     conn: Connection,
 }
@@ -124,7 +133,24 @@ impl DownloadDb {
             );
             CREATE INDEX IF NOT EXISTS idx_status ON downloads(status);
             CREATE INDEX IF NOT EXISTS idx_album ON downloads(album);
-            CREATE INDEX IF NOT EXISTS idx_artist ON downloads(artist);"
+            CREATE INDEX IF NOT EXISTS idx_artist ON downloads(artist);
+
+            CREATE TABLE IF NOT EXISTS synced_playlists (
+                playlist_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                track_count INTEGER DEFAULT 0,
+                last_synced DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS playlist_tracks (
+                playlist_id TEXT NOT NULL,
+                track_id INTEGER NOT NULL,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (playlist_id, track_id),
+                FOREIGN KEY (playlist_id) REFERENCES synced_playlists(playlist_id) ON DELETE CASCADE,
+                FOREIGN KEY (track_id) REFERENCES downloads(track_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_playlist_tracks ON playlist_tracks(playlist_id);"
         ).context("Failed to initialize database schema")?;
         Ok(())
     }
@@ -353,5 +379,128 @@ impl DownloadDb {
         )?;
 
         Ok(paths)
+    }
+
+    // Playlist sync methods
+
+    pub fn sync_playlist(&self, playlist: &Playlist, tracks: &[Track]) -> Result<usize> {
+        // Insert or update playlist
+        self.conn.execute(
+            "INSERT OR REPLACE INTO synced_playlists (playlist_id, name, track_count, last_synced)
+             VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)",
+            params![playlist.id, playlist.title, tracks.len()],
+        )?;
+
+        // Get existing track IDs for this playlist
+        let mut stmt = self.conn.prepare(
+            "SELECT track_id FROM playlist_tracks WHERE playlist_id = ?1"
+        )?;
+        let existing_ids: std::collections::HashSet<u64> = stmt
+            .query_map([&playlist.id], |row| Ok(row.get::<_, i64>(0)? as u64))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Find new tracks
+        let mut new_count = 0;
+        for (pos, track) in tracks.iter().enumerate() {
+            if !existing_ids.contains(&track.id) {
+                // Queue the download
+                self.queue_download(track)?;
+
+                // Link to playlist
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO playlist_tracks (playlist_id, track_id, position)
+                     VALUES (?1, ?2, ?3)",
+                    params![playlist.id, track.id as i64, pos],
+                )?;
+
+                new_count += 1;
+            }
+        }
+
+        Ok(new_count)
+    }
+
+    pub fn get_synced_playlists(&self) -> Result<Vec<SyncedPlaylist>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT sp.playlist_id, sp.name, sp.track_count, sp.last_synced,
+                    (SELECT COUNT(*) FROM playlist_tracks pt
+                     JOIN downloads d ON pt.track_id = d.track_id
+                     WHERE pt.playlist_id = sp.playlist_id AND d.status = 'completed') as synced_count
+             FROM synced_playlists sp
+             ORDER BY sp.last_synced DESC"
+        )?;
+
+        let playlists = stmt
+            .query_map([], |row| {
+                Ok(SyncedPlaylist {
+                    playlist_id: row.get(0)?,
+                    name: row.get(1)?,
+                    track_count: row.get::<_, i64>(2)? as usize,
+                    last_synced: row.get(3)?,
+                    synced_count: row.get::<_, i64>(4)? as usize,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(playlists)
+    }
+
+    pub fn get_playlist_new_tracks(&self, playlist_id: &str, current_tracks: &[Track]) -> Result<Vec<Track>> {
+        // Get track IDs we already have for this playlist
+        let mut stmt = self.conn.prepare(
+            "SELECT track_id FROM playlist_tracks WHERE playlist_id = ?1"
+        )?;
+        let existing_ids: std::collections::HashSet<u64> = stmt
+            .query_map([playlist_id], |row| Ok(row.get::<_, i64>(0)? as u64))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Return tracks not in our database
+        let new_tracks: Vec<Track> = current_tracks
+            .iter()
+            .filter(|t| !existing_ids.contains(&t.id))
+            .cloned()
+            .collect();
+
+        Ok(new_tracks)
+    }
+
+    pub fn is_playlist_synced(&self, playlist_id: &str) -> bool {
+        self.conn
+            .query_row(
+                "SELECT 1 FROM synced_playlists WHERE playlist_id = ?1",
+                [playlist_id],
+                |_| Ok(()),
+            )
+            .is_ok()
+    }
+
+    pub fn remove_synced_playlist(&self, playlist_id: &str) -> Result<()> {
+        // Remove playlist tracks links (downloads remain)
+        self.conn.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
+            [playlist_id],
+        )?;
+
+        // Remove playlist
+        self.conn.execute(
+            "DELETE FROM synced_playlists WHERE playlist_id = ?1",
+            [playlist_id],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn get_downloaded_track_ids(&self) -> Result<std::collections::HashSet<u64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT track_id FROM downloads WHERE status = 'completed'"
+        )?;
+        let ids = stmt
+            .query_map([], |row| Ok(row.get::<_, i64>(0)? as u64))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(ids)
     }
 }

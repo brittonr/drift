@@ -7,8 +7,8 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
 
-use crate::download_db::{DownloadDb, DownloadRecord, DownloadStatus};
-use crate::tidal::{TidalClient, Track};
+use crate::download_db::{DownloadDb, DownloadRecord, SyncedPlaylist};
+use crate::tidal::{Playlist, TidalClient, Track};
 
 const MAX_CONCURRENT_DOWNLOADS: usize = 2;
 
@@ -19,6 +19,7 @@ pub enum DownloadEvent {
     Completed { track_id: u64, path: String },
     Failed { track_id: u64, error: String },
     QueueUpdated,
+    PlaylistSynced { playlist_id: String, name: String, new_tracks: usize },
 }
 
 pub struct DownloadManager {
@@ -338,6 +339,43 @@ impl DownloadManager {
 
         let _ = self.event_tx.send(DownloadEvent::QueueUpdated);
         Ok(())
+    }
+
+    // Playlist sync methods
+
+    pub fn sync_playlist(&self, playlist: &Playlist, tracks: &[Track]) -> Result<usize> {
+        let new_count = self.db.sync_playlist(playlist, tracks)?;
+
+        let _ = self.event_tx.send(DownloadEvent::PlaylistSynced {
+            playlist_id: playlist.id.clone(),
+            name: playlist.title.clone(),
+            new_tracks: new_count,
+        });
+        let _ = self.event_tx.send(DownloadEvent::QueueUpdated);
+
+        Ok(new_count)
+    }
+
+    pub fn get_synced_playlists(&self) -> Result<Vec<SyncedPlaylist>> {
+        self.db.get_synced_playlists()
+    }
+
+    pub fn is_playlist_synced(&self, playlist_id: &str) -> bool {
+        self.db.is_playlist_synced(playlist_id)
+    }
+
+    pub fn remove_synced_playlist(&self, playlist_id: &str) -> Result<()> {
+        self.db.remove_synced_playlist(playlist_id)?;
+        let _ = self.event_tx.send(DownloadEvent::QueueUpdated);
+        Ok(())
+    }
+
+    pub fn get_playlist_new_tracks(&self, playlist_id: &str, current_tracks: &[Track]) -> Result<Vec<Track>> {
+        self.db.get_playlist_new_tracks(playlist_id, current_tracks)
+    }
+
+    pub fn get_downloaded_track_ids(&self) -> Result<std::collections::HashSet<u64>> {
+        self.db.get_downloaded_track_ids()
     }
 }
 

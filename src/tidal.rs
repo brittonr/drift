@@ -821,6 +821,300 @@ impl TidalClient {
         Ok(vec![])
     }
 
+    /// Get user's favorite tracks
+    pub async fn get_favorite_tracks(&mut self) -> Result<Vec<Track>> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!(
+                    "https://api.tidal.com/v1/users/{}/favorites/tracks",
+                    config.user_id
+                );
+
+                let response = self.http_client
+                    .get(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US"), ("limit", "100")])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        let json: Value = resp.json().await?;
+
+                        let tracks = if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                            items.iter().filter_map(|item| {
+                                // Favorite tracks have the track nested under "item"
+                                let track_data = item.get("item")?;
+
+                                let id = track_data.get("id")?.as_u64()?;
+                                let title = track_data.get("title")?.as_str()?.to_string();
+
+                                let artist = track_data.get("artist")
+                                    .and_then(|a| a.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .or_else(|| {
+                                        track_data.get("artists")
+                                            .and_then(|a| a.as_array())
+                                            .and_then(|arr| arr.first())
+                                            .and_then(|a| a.get("name"))
+                                            .and_then(|n| n.as_str())
+                                    })
+                                    .unwrap_or("Unknown Artist")
+                                    .to_string();
+
+                                let album = track_data.get("album")
+                                    .and_then(|a| a.get("title"))
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("Unknown Album")
+                                    .to_string();
+
+                                let album_cover_id = track_data.get("album")
+                                    .and_then(|a| a.get("cover"))
+                                    .and_then(|c| c.as_str())
+                                    .map(|s| s.to_string());
+
+                                let duration = track_data.get("duration")?.as_u64()? as u32;
+
+                                Some(Track {
+                                    id,
+                                    title,
+                                    artist,
+                                    album,
+                                    duration_seconds: duration,
+                                    album_cover_id,
+                                })
+                            }).collect()
+                        } else {
+                            vec![]
+                        };
+
+                        return Ok(tracks);
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        eprintln!("Favorite tracks request failed: {}", resp.status());
+                    }
+                    Err(e) => {
+                        eprintln!("Network error fetching favorite tracks: {}", e);
+                    }
+                }
+            }
+            break;
+        }
+
+        Ok(vec![])
+    }
+
+    /// Get user's favorite albums
+    pub async fn get_favorite_albums(&mut self) -> Result<Vec<Album>> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!(
+                    "https://api.tidal.com/v1/users/{}/favorites/albums",
+                    config.user_id
+                );
+
+                let response = self.http_client
+                    .get(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US"), ("limit", "100")])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        let json: Value = resp.json().await?;
+
+                        let albums = if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                            items.iter().filter_map(|item| {
+                                // Favorite albums have the album nested under "item"
+                                let album_data = item.get("item")?;
+
+                                let id = album_data.get("id")?.as_u64()?.to_string();
+                                let title = album_data.get("title")?.as_str()?.to_string();
+                                let artist = album_data.get("artist")
+                                    .and_then(|a| a.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("Unknown Artist")
+                                    .to_string();
+                                let num_tracks = album_data.get("numberOfTracks")
+                                    .and_then(|n| n.as_u64())
+                                    .unwrap_or(0) as u32;
+
+                                Some(Album {
+                                    id,
+                                    title,
+                                    artist,
+                                    num_tracks,
+                                })
+                            }).collect()
+                        } else {
+                            vec![]
+                        };
+
+                        return Ok(albums);
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        eprintln!("Favorite albums request failed: {}", resp.status());
+                    }
+                    Err(e) => {
+                        eprintln!("Network error fetching favorite albums: {}", e);
+                    }
+                }
+            }
+            break;
+        }
+
+        Ok(vec![])
+    }
+
+    /// Get user's favorite artists
+    pub async fn get_favorite_artists(&mut self) -> Result<Vec<Artist>> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!(
+                    "https://api.tidal.com/v1/users/{}/favorites/artists",
+                    config.user_id
+                );
+
+                let response = self.http_client
+                    .get(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US"), ("limit", "100")])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        let json: Value = resp.json().await?;
+
+                        let artists = if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                            items.iter().filter_map(|item| {
+                                // Favorite artists have the artist nested under "item"
+                                let artist_data = item.get("item")?;
+
+                                let id = artist_data.get("id")?.as_u64()?;
+                                let name = artist_data.get("name")?.as_str()?.to_string();
+
+                                Some(Artist { id, name })
+                            }).collect()
+                        } else {
+                            vec![]
+                        };
+
+                        return Ok(artists);
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        eprintln!("Favorite artists request failed: {}", resp.status());
+                    }
+                    Err(e) => {
+                        eprintln!("Network error fetching favorite artists: {}", e);
+                    }
+                }
+            }
+            break;
+        }
+
+        Ok(vec![])
+    }
+
+    /// Add a track to favorites
+    pub async fn add_favorite_track(&mut self, track_id: u64) -> Result<()> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!(
+                    "https://api.tidal.com/v1/users/{}/favorites/tracks",
+                    config.user_id
+                );
+
+                let response = self.http_client
+                    .post(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US")])
+                    .form(&[("trackIds", track_id.to_string())])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 || resp.status().as_u16() == 201 => {
+                        return Ok(());
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(anyhow!("Failed to add favorite: {} - {}", status, body));
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Network error adding favorite: {}", e));
+                    }
+                }
+            }
+            break;
+        }
+
+        Err(anyhow!("No configuration available"))
+    }
+
+    /// Remove a track from favorites
+    pub async fn remove_favorite_track(&mut self, track_id: u64) -> Result<()> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!(
+                    "https://api.tidal.com/v1/users/{}/favorites/tracks/{}",
+                    config.user_id, track_id
+                );
+
+                let response = self.http_client
+                    .delete(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US")])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 || resp.status().as_u16() == 204 => {
+                        return Ok(());
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(anyhow!("Failed to remove favorite: {} - {}", status, body));
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Network error removing favorite: {}", e));
+                    }
+                }
+            }
+            break;
+        }
+
+        Err(anyhow!("No configuration available"))
+    }
+
     /// Get top tracks for an artist
     pub async fn get_artist_top_tracks(&mut self, artist_id: u64) -> Result<Vec<Track>> {
         for attempt in 0..2 {

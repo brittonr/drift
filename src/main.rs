@@ -30,10 +30,18 @@ enum ViewMode {
     Browse,
     Search,
     Downloads,
+    Library,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum SearchTab {
+    Tracks,
+    Albums,
+    Artists,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum LibraryTab {
     Tracks,
     Albums,
     Artists,
@@ -105,6 +113,16 @@ struct App {
     download_records: Vec<download_db::DownloadRecord>,
     selected_download: usize,
     offline_mode: bool,
+
+    // Library/Favorites
+    library_tab: LibraryTab,
+    favorite_tracks: Vec<Track>,
+    favorite_albums: Vec<tidal::Album>,
+    favorite_artists: Vec<tidal::Artist>,
+    selected_favorite_track: usize,
+    selected_favorite_album: usize,
+    selected_favorite_artist: usize,
+    favorites_loaded: bool,
 }
 
 impl App {
@@ -238,6 +256,14 @@ impl App {
             download_records,
             selected_download: 0,
             offline_mode: false,
+            library_tab: LibraryTab::Tracks,
+            favorite_tracks: Vec::new(),
+            favorite_albums: Vec::new(),
+            favorite_artists: Vec::new(),
+            selected_favorite_track: 0,
+            selected_favorite_album: 0,
+            selected_favorite_artist: 0,
+            favorites_loaded: false,
         })
     }
 
@@ -814,6 +840,19 @@ impl App {
             if !self.download_records.is_empty() {
                 self.selected_download = (self.selected_download + 1).min(self.download_records.len() - 1);
             }
+        } else if self.view_mode == ViewMode::Library {
+            match self.library_tab {
+                LibraryTab::Tracks if !self.favorite_tracks.is_empty() => {
+                    self.selected_favorite_track = (self.selected_favorite_track + 1).min(self.favorite_tracks.len() - 1);
+                }
+                LibraryTab::Albums if !self.favorite_albums.is_empty() => {
+                    self.selected_favorite_album = (self.selected_favorite_album + 1).min(self.favorite_albums.len() - 1);
+                }
+                LibraryTab::Artists if !self.favorite_artists.is_empty() => {
+                    self.selected_favorite_artist = (self.selected_favorite_artist + 1).min(self.favorite_artists.len() - 1);
+                }
+                _ => {}
+            }
         } else if self.view_mode == ViewMode::Browse {
             if self.selected_tab == 0 && !self.playlists.is_empty() {
                 self.selected_playlist = (self.selected_playlist + 1).min(self.playlists.len() - 1);
@@ -844,6 +883,19 @@ impl App {
         } else if self.view_mode == ViewMode::Downloads {
             if self.selected_download > 0 {
                 self.selected_download -= 1;
+            }
+        } else if self.view_mode == ViewMode::Library {
+            match self.library_tab {
+                LibraryTab::Tracks if self.selected_favorite_track > 0 => {
+                    self.selected_favorite_track -= 1;
+                }
+                LibraryTab::Albums if self.selected_favorite_album > 0 => {
+                    self.selected_favorite_album -= 1;
+                }
+                LibraryTab::Artists if self.selected_favorite_artist > 0 => {
+                    self.selected_favorite_artist -= 1;
+                }
+                _ => {}
             }
         } else if self.view_mode == ViewMode::Browse {
             if self.selected_tab == 0 && self.selected_playlist > 0 {
@@ -1038,6 +1090,13 @@ impl App {
                     None
                 }
             }
+            ViewMode::Library => {
+                if self.library_tab == LibraryTab::Tracks && self.selected_favorite_track < self.favorite_tracks.len() {
+                    Some(self.favorite_tracks[self.selected_favorite_track].clone())
+                } else {
+                    None
+                }
+            }
             ViewMode::Downloads => None,
         };
 
@@ -1065,6 +1124,13 @@ impl App {
                         SearchTab::Tracks => results.tracks.clone(),
                         _ => Vec::new(),
                     }
+                } else {
+                    Vec::new()
+                }
+            }
+            ViewMode::Library => {
+                if self.library_tab == LibraryTab::Tracks {
+                    self.favorite_tracks.clone()
                 } else {
                     Vec::new()
                 }
@@ -1142,6 +1208,96 @@ impl App {
         }
     }
 
+    fn sync_selected_playlist(&mut self) {
+        // Only works in browse mode with playlists tab selected
+        if self.view_mode != ViewMode::Browse || self.selected_tab != 0 {
+            self.add_debug("Select a playlist to sync (browse mode, playlists tab)".to_string());
+            return;
+        }
+
+        if self.playlists.is_empty() || self.selected_playlist >= self.playlists.len() {
+            return;
+        }
+
+        let playlist = self.playlists[self.selected_playlist].clone();
+        let tracks = self.tracks.clone();
+
+        if let Some(ref dm) = self.download_manager {
+            match dm.sync_playlist(&playlist, &tracks) {
+                Ok(new_count) => {
+                    if new_count > 0 {
+                        self.add_debug(format!(
+                            "Synced playlist '{}': {} new tracks queued for download",
+                            playlist.title, new_count
+                        ));
+                    } else {
+                        self.add_debug(format!(
+                            "Playlist '{}' already synced, no new tracks",
+                            playlist.title
+                        ));
+                    }
+                    self.refresh_download_list();
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to sync playlist: {}", e));
+                }
+            }
+        }
+    }
+
+    fn is_playlist_synced(&self, playlist_id: &str) -> bool {
+        if let Some(ref dm) = self.download_manager {
+            dm.is_playlist_synced(playlist_id)
+        } else {
+            false
+        }
+    }
+
+    async fn load_favorites(&mut self) {
+        self.add_debug("Loading favorites from Tidal...".to_string());
+
+        // Load favorite tracks
+        match self.tidal_client.get_favorite_tracks().await {
+            Ok(tracks) => {
+                let count = tracks.len();
+                self.favorite_tracks = tracks;
+                self.add_debug(format!("Loaded {} favorite tracks", count));
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load favorite tracks: {}", e));
+            }
+        }
+
+        // Load favorite albums
+        match self.tidal_client.get_favorite_albums().await {
+            Ok(albums) => {
+                let count = albums.len();
+                self.favorite_albums = albums;
+                self.add_debug(format!("Loaded {} favorite albums", count));
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load favorite albums: {}", e));
+            }
+        }
+
+        // Load favorite artists
+        match self.tidal_client.get_favorite_artists().await {
+            Ok(artists) => {
+                let count = artists.len();
+                self.favorite_artists = artists;
+                self.add_debug(format!("Loaded {} favorite artists", count));
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load favorite artists: {}", e));
+            }
+        }
+
+        self.favorites_loaded = true;
+        self.selected_favorite_track = 0;
+        self.selected_favorite_album = 0;
+        self.selected_favorite_artist = 0;
+    }
+
     async fn process_downloads(&mut self) {
         if let Some(ref dm) = self.download_manager {
             match dm.process_next_download(&mut self.tidal_client, &mut self.debug_log).await {
@@ -1187,6 +1343,13 @@ impl App {
                     needs_refresh = true;
                 }
                 downloads::DownloadEvent::Progress { .. } => {
+                    needs_refresh = true;
+                }
+                downloads::DownloadEvent::PlaylistSynced { name, new_tracks, .. } => {
+                    self.add_debug(format!(
+                        "Playlist '{}' synced: {} new tracks queued",
+                        name, new_tracks
+                    ));
                     needs_refresh = true;
                 }
             }
@@ -1262,6 +1425,12 @@ async fn run_app<B: ratatui::backend::Backend>(
             }
             // Process pending downloads
             app.process_downloads().await;
+
+            // Load favorites if in Library view and not loaded yet
+            if app.view_mode == ViewMode::Library && !app.favorites_loaded {
+                app.load_favorites().await;
+            }
+
             last_status_check = std::time::Instant::now();
         }
 
@@ -1590,7 +1759,14 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.selected_tab = (app.selected_tab + 1) % 2;
                             app.add_debug(format!("Switched to {} panel",
                                 if app.selected_tab == 0 { "playlists" } else { "tracks" }));
-                        } else {
+                        } else if app.view_mode == ViewMode::Library {
+                            app.library_tab = match app.library_tab {
+                                LibraryTab::Tracks => LibraryTab::Albums,
+                                LibraryTab::Albums => LibraryTab::Artists,
+                                LibraryTab::Artists => LibraryTab::Tracks,
+                            };
+                            app.add_debug(format!("Switched to {:?} favorites", app.library_tab));
+                        } else if app.view_mode == ViewMode::Search {
                             app.search_tab = match app.search_tab {
                                 SearchTab::Tracks => SearchTab::Albums,
                                 SearchTab::Albums => SearchTab::Artists,
@@ -1624,10 +1800,15 @@ async fn run_app<B: ratatui::backend::Backend>(
                         }
                     }
 
-                    // Playback mode toggles
+                    // Playback mode toggles (r: repeat, but in Library view it refreshes)
                     KeyCode::Char('r') => {
-                        if let Err(e) = app.mpd_controller.toggle_repeat(&mut app.debug_log).await {
-                            app.add_debug(format!("✗ Repeat toggle error: {}", e));
+                        if app.view_mode == ViewMode::Library {
+                            app.favorites_loaded = false;
+                            app.add_debug("Refreshing favorites...".to_string());
+                        } else {
+                            if let Err(e) = app.mpd_controller.toggle_repeat(&mut app.debug_log).await {
+                                app.add_debug(format!("✗ Repeat toggle error: {}", e));
+                            }
                         }
                     }
                     KeyCode::Char('s') => {
@@ -1650,6 +1831,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                     // KeyCode::Char('A') => {
                     //     app.download_all_tracks();
                     // }
+
+                    // Shift+S: Sync selected playlist for offline (downloads all tracks)
+                    KeyCode::Char('S') => {
+                        app.sync_selected_playlist();
+                    }
 
                     // o: Toggle offline mode
                     KeyCode::Char('o') => {
@@ -1675,6 +1861,30 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Char('R') => {
                         if app.view_mode == ViewMode::Downloads {
                             app.retry_selected_download();
+                        }
+                    }
+
+                    // Shift+L: Open Library/Favorites view
+                    KeyCode::Char('L') => {
+                        app.view_mode = ViewMode::Library;
+                        if !app.favorites_loaded {
+                            app.add_debug("Loading favorites...".to_string());
+                        }
+                        app.add_debug("Library view".to_string());
+                    }
+
+                    // f: Add current track to favorites (or remove if in library view)
+                    KeyCode::Char('f') => {
+                        if app.view_mode == ViewMode::Library && app.library_tab == LibraryTab::Tracks {
+                            // In library view - remove from favorites
+                            if !app.favorite_tracks.is_empty() && app.selected_favorite_track < app.favorite_tracks.len() {
+                                let track = app.favorite_tracks[app.selected_favorite_track].clone();
+                                app.add_debug(format!("Removing from favorites: {}", track.title));
+                                // Will be handled in event loop
+                            }
+                        } else {
+                            // Add current track to favorites
+                            app.add_debug("Adding to favorites...".to_string());
                         }
                     }
 
@@ -1724,6 +1934,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             ViewMode::Browse => "Browse",
             ViewMode::Search => "Search",
             ViewMode::Downloads => "Downloads",
+            ViewMode::Library => "Library",
         }
     );
 
@@ -1767,6 +1978,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             ViewMode::Browse => render_browse_view(f, app, content_chunks[0]),
             ViewMode::Search => render_search_view(f, app, content_chunks[0]),
             ViewMode::Downloads => render_downloads_view(f, app, content_chunks[0]),
+            ViewMode::Library => render_library_view(f, app, content_chunks[0]),
         }
 
         // Render queue on the right
@@ -1780,6 +1992,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             ViewMode::Browse => render_browse_view(f, app, content_area),
             ViewMode::Search => render_search_view(f, app, content_area),
             ViewMode::Downloads => render_downloads_view(f, app, content_area),
+            ViewMode::Library => render_library_view(f, app, content_area),
         }
     }
     chunk_index += 1;
@@ -2288,6 +2501,137 @@ fn render_downloads_view(f: &mut Frame, app: &mut App, area: ratatui::layout::Re
     );
 }
 
+fn render_library_view(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    let library_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
+        .split(area);
+
+    // Tab bar
+    let tabs = vec![
+        Span::styled(
+            " Tracks ",
+            if app.library_tab == LibraryTab::Tracks {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            " Albums ",
+            if app.library_tab == LibraryTab::Albums {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            " Artists ",
+            if app.library_tab == LibraryTab::Artists {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        ),
+    ];
+
+    let tab_line = Paragraph::new(Line::from(tabs))
+        .block(
+            Block::default()
+                .title("Library [Tab: switch | r: refresh | f: unfavorite | b: back]")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .alignment(Alignment::Center);
+    f.render_widget(tab_line, library_chunks[0]);
+
+    // Store clickable area
+    app.clickable_areas.right_list = Some(library_chunks[1]);
+
+    // Content based on selected tab
+    match app.library_tab {
+        LibraryTab::Tracks => {
+            let items: Vec<ListItem> = app
+                .favorite_tracks
+                .iter()
+                .enumerate()
+                .map(|(i, track)| {
+                    let style = if i == app.selected_favorite_track {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    let display = TidalClient::format_track_display(track);
+                    ListItem::new(display).style(style)
+                })
+                .collect();
+
+            let count = app.favorite_tracks.len();
+            let list = List::new(items)
+                .block(
+                    Block::default()
+                        .title(format!("Favorite Tracks ({}) [p: play | y: queue]", count))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                );
+            f.render_widget(list, library_chunks[1]);
+        }
+        LibraryTab::Albums => {
+            let items: Vec<ListItem> = app
+                .favorite_albums
+                .iter()
+                .enumerate()
+                .map(|(i, album)| {
+                    let style = if i == app.selected_favorite_album {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    let display = format!("{} - {} ({} tracks)", album.artist, album.title, album.num_tracks);
+                    ListItem::new(display).style(style)
+                })
+                .collect();
+
+            let count = app.favorite_albums.len();
+            let list = List::new(items)
+                .block(
+                    Block::default()
+                        .title(format!("Favorite Albums ({}) [Enter: add to queue]", count))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                );
+            f.render_widget(list, library_chunks[1]);
+        }
+        LibraryTab::Artists => {
+            let items: Vec<ListItem> = app
+                .favorite_artists
+                .iter()
+                .enumerate()
+                .map(|(i, artist)| {
+                    let style = if i == app.selected_favorite_artist {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(artist.name.clone()).style(style)
+                })
+                .collect();
+
+            let count = app.favorite_artists.len();
+            let list = List::new(items)
+                .block(
+                    Block::default()
+                        .title(format!("Favorite Artists ({}) [Enter: add top tracks]", count))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                );
+            f.render_widget(list, library_chunks[1]);
+        }
+    }
+}
+
 fn render_browse_view(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -2309,7 +2653,10 @@ fn render_browse_view(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect)
             } else {
                 Style::default()
             };
-            let display = TidalClient::format_playlist_display(playlist);
+            let mut display = TidalClient::format_playlist_display(playlist);
+            if app.is_playlist_synced(&playlist.id) {
+                display = format!("[S] {}", display);
+            }
             ListItem::new(display).style(style)
         })
         .collect();
@@ -2318,7 +2665,7 @@ fn render_browse_view(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Playlists [h/l: switch | Enter: load]")
+                .title("Playlists [h/l: switch | Enter: load | S: sync]")
                 .border_style(if app.selected_tab == 0 {
                     Style::default().fg(Color::Yellow)
                 } else {
