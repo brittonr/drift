@@ -735,4 +735,171 @@ impl TidalClient {
             Err(anyhow!("No configuration available to refresh"))
         }
     }
+
+    /// Get tracks from an album
+    pub async fn get_album_tracks(&mut self, album_id: &str) -> Result<Vec<Track>> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!("https://api.tidal.com/v1/albums/{}/items", album_id);
+
+                let response = self.http_client
+                    .get(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US"), ("limit", "100")])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        let json: Value = resp.json().await?;
+
+                        let tracks = if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                            items.iter().filter_map(|item| {
+                                // Album items have the track nested under "item"
+                                let track_data = item.get("item")?;
+
+                                let id = track_data.get("id")?.as_u64()?;
+                                let title = track_data.get("title")?.as_str()?.to_string();
+
+                                let artist = track_data.get("artist")
+                                    .and_then(|a| a.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .or_else(|| {
+                                        track_data.get("artists")
+                                            .and_then(|a| a.as_array())
+                                            .and_then(|arr| arr.first())
+                                            .and_then(|a| a.get("name"))
+                                            .and_then(|n| n.as_str())
+                                    })
+                                    .unwrap_or("Unknown Artist")
+                                    .to_string();
+
+                                let album = track_data.get("album")
+                                    .and_then(|a| a.get("title"))
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("Unknown Album")
+                                    .to_string();
+
+                                let album_cover_id = track_data.get("album")
+                                    .and_then(|a| a.get("cover"))
+                                    .and_then(|c| c.as_str())
+                                    .map(|s| s.to_string());
+
+                                let duration = track_data.get("duration")?.as_u64()? as u32;
+
+                                Some(Track {
+                                    id,
+                                    title,
+                                    artist,
+                                    album,
+                                    duration_seconds: duration,
+                                    album_cover_id,
+                                })
+                            }).collect()
+                        } else {
+                            vec![]
+                        };
+
+                        return Ok(tracks);
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        eprintln!("Album tracks request failed: {}", resp.status());
+                    }
+                    Err(e) => {
+                        eprintln!("Network error fetching album tracks: {}", e);
+                    }
+                }
+            }
+            break;
+        }
+
+        Ok(vec![])
+    }
+
+    /// Get top tracks for an artist
+    pub async fn get_artist_top_tracks(&mut self, artist_id: u64) -> Result<Vec<Track>> {
+        for attempt in 0..2 {
+            if let Some(ref config) = self.config {
+                let url = format!("https://api.tidal.com/v1/artists/{}/toptracks", artist_id);
+
+                let response = self.http_client
+                    .get(&url)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", config.access_token))
+                    .query(&[("countryCode", "US"), ("limit", "20")])
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        let json: Value = resp.json().await?;
+
+                        let tracks = if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                            items.iter().filter_map(|item| {
+                                let id = item.get("id")?.as_u64()?;
+                                let title = item.get("title")?.as_str()?.to_string();
+
+                                let artist = item.get("artist")
+                                    .and_then(|a| a.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .or_else(|| {
+                                        item.get("artists")
+                                            .and_then(|a| a.as_array())
+                                            .and_then(|arr| arr.first())
+                                            .and_then(|a| a.get("name"))
+                                            .and_then(|n| n.as_str())
+                                    })
+                                    .unwrap_or("Unknown Artist")
+                                    .to_string();
+
+                                let album = item.get("album")
+                                    .and_then(|a| a.get("title"))
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("Unknown Album")
+                                    .to_string();
+
+                                let album_cover_id = item.get("album")
+                                    .and_then(|a| a.get("cover"))
+                                    .and_then(|c| c.as_str())
+                                    .map(|s| s.to_string());
+
+                                let duration = item.get("duration")?.as_u64()? as u32;
+
+                                Some(Track {
+                                    id,
+                                    title,
+                                    artist,
+                                    album,
+                                    duration_seconds: duration,
+                                    album_cover_id,
+                                })
+                            }).collect()
+                        } else {
+                            vec![]
+                        };
+
+                        return Ok(tracks);
+                    }
+                    Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
+                        if self.refresh_token().await.is_ok() {
+                            continue;
+                        }
+                    }
+                    Ok(resp) => {
+                        eprintln!("Artist top tracks request failed: {}", resp.status());
+                    }
+                    Err(e) => {
+                        eprintln!("Network error fetching artist top tracks: {}", e);
+                    }
+                }
+            }
+            break;
+        }
+
+        Ok(vec![])
+    }
 }

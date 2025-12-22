@@ -567,6 +567,134 @@ impl App {
         Ok(())
     }
 
+    async fn add_album_to_queue(&mut self) -> Result<()> {
+        let album = if let Some(ref results) = self.search_results {
+            if self.search_tab == SearchTab::Albums && self.selected_search_album < results.albums.len() {
+                results.albums[self.selected_search_album].clone()
+            } else {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        };
+
+        self.add_debug(format!("Fetching tracks for album: {} - {}", album.artist, album.title));
+
+        let tracks = match self.tidal_client.get_album_tracks(&album.id).await {
+            Ok(t) => t,
+            Err(e) => {
+                self.add_debug(format!("Failed to get album tracks: {}", e));
+                return Ok(());
+            }
+        };
+
+        if tracks.is_empty() {
+            self.add_debug("No tracks found for album".to_string());
+            return Ok(());
+        }
+
+        self.add_debug(format!("Adding {} tracks from album...", tracks.len()));
+
+        let was_playing = self.mpd_controller.get_status(&mut self.debug_log).await?.is_playing;
+        let mut added_count = 0;
+
+        for track in &tracks {
+            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+                Ok(url) => {
+                    if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
+                        self.add_debug(format!("Failed to add {}: {}", track.title, e));
+                    } else {
+                        self.local_queue.push(track.clone());
+                        added_count += 1;
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
+                }
+            }
+        }
+
+        self.add_debug(format!("Added {}/{} tracks from album", added_count, tracks.len()));
+
+        if let Ok(queue) = self.mpd_controller.get_queue().await {
+            self.queue = queue;
+        }
+
+        if !was_playing && added_count > 0 {
+            if let Err(e) = self.mpd_controller.play(&mut self.debug_log).await {
+                self.add_debug(format!("Play failed: {}", e));
+            } else {
+                self.is_playing = true;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn add_artist_to_queue(&mut self) -> Result<()> {
+        let artist = if let Some(ref results) = self.search_results {
+            if self.search_tab == SearchTab::Artists && self.selected_search_artist < results.artists.len() {
+                results.artists[self.selected_search_artist].clone()
+            } else {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        };
+
+        self.add_debug(format!("Fetching top tracks for artist: {}", artist.name));
+
+        let tracks = match self.tidal_client.get_artist_top_tracks(artist.id).await {
+            Ok(t) => t,
+            Err(e) => {
+                self.add_debug(format!("Failed to get artist tracks: {}", e));
+                return Ok(());
+            }
+        };
+
+        if tracks.is_empty() {
+            self.add_debug("No tracks found for artist".to_string());
+            return Ok(());
+        }
+
+        self.add_debug(format!("Adding {} top tracks from artist...", tracks.len()));
+
+        let was_playing = self.mpd_controller.get_status(&mut self.debug_log).await?.is_playing;
+        let mut added_count = 0;
+
+        for track in &tracks {
+            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+                Ok(url) => {
+                    if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
+                        self.add_debug(format!("Failed to add {}: {}", track.title, e));
+                    } else {
+                        self.local_queue.push(track.clone());
+                        added_count += 1;
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
+                }
+            }
+        }
+
+        self.add_debug(format!("Added {}/{} top tracks from artist", added_count, tracks.len()));
+
+        if let Ok(queue) = self.mpd_controller.get_queue().await {
+            self.queue = queue;
+        }
+
+        if !was_playing && added_count > 0 {
+            if let Err(e) = self.mpd_controller.play(&mut self.debug_log).await {
+                self.add_debug(format!("Play failed: {}", e));
+            } else {
+                self.is_playing = true;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn toggle_playback(&mut self) -> Result<()> {
         if self.is_playing {
             self.add_debug("Pausing playback...".to_string());
@@ -959,16 +1087,58 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     app.add_debug(format!("✗ Error playing track: {}", e));
                                 }
                             }
-                        } else if app.search_tab == SearchTab::Tracks {
-                            if let Err(e) = app.play_selected_track().await {
-                                app.add_debug(format!("✗ Error playing track: {}", e));
+                        } else if app.view_mode == ViewMode::Search {
+                            match app.search_tab {
+                                SearchTab::Tracks => {
+                                    if let Err(e) = app.play_selected_track().await {
+                                        app.add_debug(format!("✗ Error playing track: {}", e));
+                                    }
+                                }
+                                SearchTab::Albums => {
+                                    if let Err(e) = app.add_album_to_queue().await {
+                                        app.add_debug(format!("✗ Error adding album: {}", e));
+                                    } else {
+                                        app.queue_dirty = true;
+                                    }
+                                }
+                                SearchTab::Artists => {
+                                    if let Err(e) = app.add_artist_to_queue().await {
+                                        app.add_debug(format!("✗ Error adding artist: {}", e));
+                                    } else {
+                                        app.queue_dirty = true;
+                                    }
+                                }
                             }
                         }
                     }
 
                     // y: yank/add to queue
                     KeyCode::Char('y') => {
-                        if let Err(e) = app.add_selected_track_to_queue().await {
+                        if app.view_mode == ViewMode::Search {
+                            match app.search_tab {
+                                SearchTab::Tracks => {
+                                    if let Err(e) = app.add_selected_track_to_queue().await {
+                                        app.add_debug(format!("✗ Failed to add track: {}", e));
+                                    } else {
+                                        app.queue_dirty = true;
+                                    }
+                                }
+                                SearchTab::Albums => {
+                                    if let Err(e) = app.add_album_to_queue().await {
+                                        app.add_debug(format!("✗ Failed to add album: {}", e));
+                                    } else {
+                                        app.queue_dirty = true;
+                                    }
+                                }
+                                SearchTab::Artists => {
+                                    if let Err(e) = app.add_artist_to_queue().await {
+                                        app.add_debug(format!("✗ Failed to add artist: {}", e));
+                                    } else {
+                                        app.queue_dirty = true;
+                                    }
+                                }
+                            }
+                        } else if let Err(e) = app.add_selected_track_to_queue().await {
                             app.add_debug(format!("✗ Failed to add track: {}", e));
                         } else {
                             app.queue_dirty = true;
@@ -996,9 +1166,27 @@ async fn run_app<B: ratatui::backend::Backend>(
                             if let Err(e) = app.play_selected_track().await {
                                 app.add_debug(format!("✗ Error playing track: {}", e));
                             }
-                        } else if app.view_mode == ViewMode::Search && app.search_tab == SearchTab::Tracks {
-                            if let Err(e) = app.play_selected_track().await {
-                                app.add_debug(format!("✗ Error playing track: {}", e));
+                        } else if app.view_mode == ViewMode::Search {
+                            match app.search_tab {
+                                SearchTab::Tracks => {
+                                    if let Err(e) = app.play_selected_track().await {
+                                        app.add_debug(format!("✗ Error playing track: {}", e));
+                                    }
+                                }
+                                SearchTab::Albums => {
+                                    if let Err(e) = app.add_album_to_queue().await {
+                                        app.add_debug(format!("✗ Error adding album: {}", e));
+                                    } else {
+                                        app.queue_dirty = true;
+                                    }
+                                }
+                                SearchTab::Artists => {
+                                    if let Err(e) = app.add_artist_to_queue().await {
+                                        app.add_debug(format!("✗ Error adding artist: {}", e));
+                                    } else {
+                                        app.queue_dirty = true;
+                                    }
+                                }
                             }
                         }
                     }
