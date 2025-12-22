@@ -1,0 +1,17 @@
+pub mod now_playing;
+pub mod visualizer;
+pub mod queue;
+pub mod browse;
+pub mod search;
+pub mod downloads;
+pub mod library;
+pub mod status_bar;
+
+pub use now_playing::render_now_playing;
+pub use visualizer::render_visualizer;
+pub use queue::render_queue;
+pub use browse::render_browse_view;
+pub use search::{render_search_view, SearchTab};
+pub use downloads::render_downloads_view;
+pub use library::{render_library_view, LibraryTab};
+pub use status_bar::render_status_bar;

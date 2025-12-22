@@ -1,0 +1,373 @@
+pub mod state;
+mod playback;
+mod navigation;
+mod downloads;
+mod queue;
+
+use std::collections::VecDeque;
+
+use anyhow::Result;
+use ratatui::layout::Rect;
+
+use crate::album_art::AlbumArtCache;
+use crate::cava::CavaVisualizer;
+use crate::config::Config;
+use crate::download_db::DownloadRecord;
+use crate::mpd::{CurrentSong, MpdController, QueueItem};
+use crate::queue_persistence::{self, PersistedQueue};
+use crate::tidal::{Album, Artist, Playlist, SearchResults, TidalClient, Track};
+use crate::downloads::{DownloadEvent, DownloadManager};
+
+pub use state::{
+    BrowseState, ClickableAreas, DownloadsState, KeyState, LibraryState,
+    PlaybackState, SearchState, ViewMode,
+};
+
+pub struct App {
+    // View state
+    pub view_mode: ViewMode,
+
+    // Browse mode data
+    pub playlists: Vec<Playlist>,
+    pub tracks: Vec<Track>,
+    pub browse: BrowseState,
+
+    // Search mode data
+    pub search: SearchState,
+    pub search_results: Option<SearchResults>,
+
+    // Playback state
+    pub playback: PlaybackState,
+    pub current_track: Option<Track>,
+    pub current_song: Option<CurrentSong>,
+    pub queue: Vec<QueueItem>,
+    pub local_queue: Vec<Track>,
+
+    // Core components
+    pub tidal_client: TidalClient,
+    pub mpd_controller: MpdController,
+    pub debug_log: VecDeque<String>,
+    pub visualizer: Option<CavaVisualizer>,
+    pub show_visualizer: bool,
+    pub album_art_cache: AlbumArtCache,
+
+    // Helix-style key command state
+    pub key_state: KeyState,
+
+    // Queue persistence
+    pub pending_restore: Option<PersistedQueue>,
+
+    // Mouse support
+    pub clickable_areas: ClickableAreas,
+
+    // Downloads
+    pub download_manager: Option<DownloadManager>,
+    pub download_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<DownloadEvent>>,
+    pub download_records: Vec<DownloadRecord>,
+    pub downloads: DownloadsState,
+
+    // Library/Favorites
+    pub library: LibraryState,
+    pub favorite_tracks: Vec<Track>,
+    pub favorite_albums: Vec<Album>,
+    pub favorite_artists: Vec<Artist>,
+
+    // Configuration
+    pub config: Config,
+}
+
+impl App {
+    pub async fn new() -> Result<Self> {
+        let mut debug_log = VecDeque::new();
+        debug_log.push_back("Starting Tidal TUI...".to_string());
+
+        // Load configuration
+        let config = match Config::load() {
+            Ok(cfg) => {
+                debug_log.push_back("Configuration loaded".to_string());
+                debug_log.push_back(format!("  MPD: {}:{}", cfg.mpd.host, cfg.mpd.port));
+                debug_log.push_back(format!("  Audio quality: {}", cfg.playback.audio_quality));
+                cfg
+            }
+            Err(e) => {
+                debug_log.push_back(format!("Failed to load config: {}, using defaults", e));
+                Config::default()
+            }
+        };
+
+        // Initialize Tidal client
+        debug_log.push_back("Initializing Tidal client...".to_string());
+        let mut tidal_client = TidalClient::new().await?;
+
+        if tidal_client.config.is_some() {
+            debug_log.push_back("Tidal credentials loaded".to_string());
+        } else {
+            debug_log.push_back("No Tidal credentials - demo mode".to_string());
+        }
+
+        // Initialize MPD controller with config
+        debug_log.push_back("Connecting to MPD...".to_string());
+        let mpd_controller = MpdController::with_config(
+            &config.mpd.host,
+            config.mpd.port,
+            &mut debug_log
+        ).await?;
+
+        // Load initial playlists
+        debug_log.push_back("Fetching playlists...".to_string());
+        let playlists = tidal_client.get_playlists().await?;
+        debug_log.push_back(format!("Loaded {} playlists", playlists.len()));
+
+        // Load tracks from first playlist if available
+        let tracks = if !playlists.is_empty() {
+            debug_log.push_back(format!("Loading tracks from '{}'...", playlists[0].title));
+            let tracks = tidal_client.get_tracks(&playlists[0].id).await?;
+            debug_log.push_back(format!("Loaded {} tracks", tracks.len()));
+            tracks
+        } else {
+            Vec::new()
+        };
+
+        // Try to initialize visualizer
+        let visualizer = if config.ui.show_visualizer {
+            match CavaVisualizer::new() {
+                Ok(mut v) => {
+                    debug_log.push_back("Visualizer initialized".to_string());
+                    match v.start() {
+                        Ok(_) => {
+                            debug_log.push_back("Cava process started".to_string());
+                            Some(v)
+                        }
+                        Err(e) => {
+                            debug_log.push_back(format!("Could not start cava: {}", e));
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug_log.push_back(format!("Could not initialize visualizer: {}", e));
+                    None
+                }
+            }
+        } else {
+            debug_log.push_back("Visualizer disabled in config".to_string());
+            None
+        };
+
+        // Initialize album art cache
+        let album_art_cache = AlbumArtCache::new()?;
+        debug_log.push_back("Album art cache initialized".to_string());
+
+        // Load persisted queue
+        let (local_queue, pending_restore) = if config.playback.resume_on_startup {
+            match queue_persistence::load_queue() {
+                Ok(Some(persisted)) => {
+                    debug_log.push_back(format!("Found {} tracks in saved queue", persisted.tracks.len()));
+                    let tracks: Vec<Track> = persisted.tracks.iter().map(Track::from).collect();
+                    (tracks, Some(persisted))
+                }
+                Ok(None) => {
+                    debug_log.push_back("No saved queue found".to_string());
+                    (Vec::new(), None)
+                }
+                Err(e) => {
+                    debug_log.push_back(format!("Failed to load queue: {}", e));
+                    (Vec::new(), None)
+                }
+            }
+        } else {
+            debug_log.push_back("Queue resume disabled in config".to_string());
+            (Vec::new(), None)
+        };
+
+        // Initialize download manager
+        let (download_manager, download_event_rx, download_records) =
+            match DownloadManager::with_config(&config.downloads) {
+                Ok((dm, rx)) => {
+                    let records = dm.get_all_downloads().unwrap_or_default();
+                    debug_log.push_back(format!("Download manager initialized ({} downloads, max {})",
+                        records.len(), config.downloads.max_concurrent));
+                    (Some(dm), Some(rx), records)
+                }
+                Err(e) => {
+                    debug_log.push_back(format!("Could not initialize downloads: {}", e));
+                    (None, None, Vec::new())
+                }
+            };
+
+        let default_volume = config.playback.default_volume;
+        let show_visualizer = config.ui.show_visualizer;
+
+        Ok(Self {
+            view_mode: ViewMode::Browse,
+            playlists,
+            tracks,
+            browse: BrowseState::default(),
+            search: SearchState::default(),
+            search_results: None,
+            playback: PlaybackState {
+                volume: default_volume,
+                ..Default::default()
+            },
+            current_track: None,
+            current_song: None,
+            queue: Vec::new(),
+            local_queue,
+            tidal_client,
+            mpd_controller,
+            debug_log,
+            visualizer,
+            show_visualizer,
+            album_art_cache,
+            key_state: KeyState::default(),
+            pending_restore,
+            clickable_areas: ClickableAreas::default(),
+            download_manager,
+            download_event_rx,
+            download_records,
+            downloads: DownloadsState::default(),
+            library: LibraryState::default(),
+            favorite_tracks: Vec::new(),
+            favorite_albums: Vec::new(),
+            favorite_artists: Vec::new(),
+            config,
+        })
+    }
+
+    pub fn add_debug(&mut self, msg: String) {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/tidal-tui-debug.log")
+        {
+            use std::io::Write;
+            let timestamp = chrono::Local::now().format("%H:%M:%S");
+            writeln!(file, "[{}] {}", timestamp, msg).ok();
+        }
+
+        self.debug_log.push_back(msg);
+        while self.debug_log.len() > 100 {
+            self.debug_log.pop_front();
+        }
+    }
+
+    pub fn update_clickable_areas(
+        &mut self,
+        left: Option<Rect>,
+        right: Option<Rect>,
+        queue: Option<Rect>,
+        progress: Option<Rect>,
+    ) {
+        self.clickable_areas.left_list = left;
+        self.clickable_areas.right_list = right;
+        self.clickable_areas.queue_list = queue;
+        self.clickable_areas.progress_bar = progress;
+    }
+
+    pub async fn load_playlist(&mut self, index: usize) -> Result<()> {
+        if index < self.playlists.len() {
+            let playlist_title = self.playlists[index].title.clone();
+            let playlist_id = self.playlists[index].id.clone();
+            self.add_debug(format!("Loading playlist: {}", playlist_title));
+
+            self.tracks = self.tidal_client.get_tracks(&playlist_id).await?;
+            self.browse.selected_track = 0;
+
+            self.add_debug(format!("Loaded {} tracks", self.tracks.len()));
+        }
+        Ok(())
+    }
+
+    pub async fn search(&mut self) -> Result<()> {
+        if self.search.query.trim().is_empty() {
+            self.add_debug("Search query is empty".to_string());
+            return Ok(());
+        }
+
+        self.add_debug(format!("Searching for: {}", self.search.query));
+        self.search.is_active = true;
+
+        match self.tidal_client.search(&self.search.query, 20).await {
+            Ok(results) => {
+                let track_count = results.tracks.len();
+                let album_count = results.albums.len();
+                let artist_count = results.artists.len();
+                self.add_debug(format!("Found {} tracks, {} albums, {} artists",
+                    track_count, album_count, artist_count));
+
+                self.search_results = Some(results);
+                self.search.selected_track = 0;
+                self.search.selected_album = 0;
+                self.search.selected_artist = 0;
+            }
+            Err(e) => {
+                self.add_debug(format!("Search failed: {}", e));
+            }
+        }
+
+        self.search.is_active = false;
+        Ok(())
+    }
+
+    pub async fn load_favorites(&mut self) {
+        self.add_debug("Loading favorites from Tidal...".to_string());
+
+        match self.tidal_client.get_favorite_tracks().await {
+            Ok(tracks) => {
+                let count = tracks.len();
+                self.favorite_tracks = tracks;
+                self.add_debug(format!("Loaded {} favorite tracks", count));
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load favorite tracks: {}", e));
+            }
+        }
+
+        match self.tidal_client.get_favorite_albums().await {
+            Ok(albums) => {
+                let count = albums.len();
+                self.favorite_albums = albums;
+                self.add_debug(format!("Loaded {} favorite albums", count));
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load favorite albums: {}", e));
+            }
+        }
+
+        match self.tidal_client.get_favorite_artists().await {
+            Ok(artists) => {
+                let count = artists.len();
+                self.favorite_artists = artists;
+                self.add_debug(format!("Loaded {} favorite artists", count));
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load favorite artists: {}", e));
+            }
+        }
+
+        self.library.loaded = true;
+        self.library.selected_track = 0;
+        self.library.selected_album = 0;
+        self.library.selected_artist = 0;
+    }
+
+    pub fn is_playlist_synced(&self, playlist_id: &str) -> bool {
+        if let Some(ref dm) = self.download_manager {
+            dm.is_playlist_synced(playlist_id)
+        } else {
+            false
+        }
+    }
+
+    pub fn get_synced_playlist_ids(&self) -> std::collections::HashSet<String> {
+        let mut synced = std::collections::HashSet::new();
+        if let Some(ref dm) = self.download_manager {
+            if let Ok(playlists) = dm.get_synced_playlists() {
+                for playlist in playlists {
+                    synced.insert(playlist.playlist_id);
+                }
+            }
+        }
+        synced
+    }
+}
