@@ -7,7 +7,15 @@ edition = "2021"
 # Tidal API
 tidalrs = "0.4"
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures-util = "0.3"
+
+# Download tracking database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Audio metadata tagging
+id3 = "1.16"
+metaflac = "0.2"
 
 # TUI framework
 ratatui = "0.29"

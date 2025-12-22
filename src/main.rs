@@ -3,6 +3,8 @@ mod mpd;
 mod cava;
 mod album_art;
 mod queue_persistence;
+mod download_db;
+mod downloads;
 
 use anyhow::Result;
 use crossterm::{
@@ -27,6 +29,7 @@ use cava::CavaVisualizer;
 enum ViewMode {
     Browse,
     Search,
+    Downloads,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -95,6 +98,13 @@ struct App {
 
     // Mouse support
     clickable_areas: ClickableAreas,
+
+    // Downloads
+    download_manager: Option<downloads::DownloadManager>,
+    download_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<downloads::DownloadEvent>>,
+    download_records: Vec<download_db::DownloadRecord>,
+    selected_download: usize,
+    offline_mode: bool,
 }
 
 impl App {
@@ -174,6 +184,19 @@ impl App {
             }
         };
 
+        // Initialize download manager
+        let (download_manager, download_event_rx, download_records) = match downloads::DownloadManager::new() {
+            Ok((dm, rx)) => {
+                let records = dm.get_all_downloads().unwrap_or_default();
+                debug_log.push_back(format!("✓ Download manager initialized ({} downloads)", records.len()));
+                (Some(dm), Some(rx), records)
+            }
+            Err(e) => {
+                debug_log.push_back(format!("⚠ Could not initialize downloads: {}", e));
+                (None, None, Vec::new())
+            }
+        };
+
         Ok(Self {
             view_mode: ViewMode::Browse,
             selected_tab: 0,
@@ -210,6 +233,11 @@ impl App {
             queue_dirty: false,
             pending_restore,
             clickable_areas: ClickableAreas::default(),
+            download_manager,
+            download_event_rx,
+            download_records,
+            selected_download: 0,
+            offline_mode: false,
         })
     }
 
@@ -782,6 +810,10 @@ impl App {
     fn move_down(&mut self) {
         if self.show_queue && !self.queue.is_empty() {
             self.selected_queue_item = (self.selected_queue_item + 1).min(self.queue.len() - 1);
+        } else if self.view_mode == ViewMode::Downloads {
+            if !self.download_records.is_empty() {
+                self.selected_download = (self.selected_download + 1).min(self.download_records.len() - 1);
+            }
         } else if self.view_mode == ViewMode::Browse {
             if self.selected_tab == 0 && !self.playlists.is_empty() {
                 self.selected_playlist = (self.selected_playlist + 1).min(self.playlists.len() - 1);
@@ -808,6 +840,10 @@ impl App {
         if self.show_queue && !self.queue.is_empty() {
             if self.selected_queue_item > 0 {
                 self.selected_queue_item -= 1;
+            }
+        } else if self.view_mode == ViewMode::Downloads {
+            if self.selected_download > 0 {
+                self.selected_download -= 1;
             }
         } else if self.view_mode == ViewMode::Browse {
             if self.selected_tab == 0 && self.selected_playlist > 0 {
@@ -979,6 +1015,187 @@ impl App {
             }
         }
     }
+
+    // Download methods
+    fn download_selected_track(&mut self) {
+        let track = match self.view_mode {
+            ViewMode::Browse => {
+                if self.selected_tab == 1 && self.selected_track < self.tracks.len() {
+                    Some(self.tracks[self.selected_track].clone())
+                } else {
+                    None
+                }
+            }
+            ViewMode::Search => {
+                if let Some(ref results) = self.search_results {
+                    match self.search_tab {
+                        SearchTab::Tracks if self.selected_search_track < results.tracks.len() => {
+                            Some(results.tracks[self.selected_search_track].clone())
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            ViewMode::Downloads => None,
+        };
+
+        if let Some(track) = track {
+            if let Some(ref dm) = self.download_manager {
+                match dm.queue_track(&track) {
+                    Ok(_) => {
+                        self.add_debug(format!("Queued download: {} - {}", track.artist, track.title));
+                        self.refresh_download_list();
+                    }
+                    Err(e) => {
+                        self.add_debug(format!("Failed to queue download: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
+    fn download_all_tracks(&mut self) {
+        let tracks: Vec<Track> = match self.view_mode {
+            ViewMode::Browse => self.tracks.clone(),
+            ViewMode::Search => {
+                if let Some(ref results) = self.search_results {
+                    match self.search_tab {
+                        SearchTab::Tracks => results.tracks.clone(),
+                        _ => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                }
+            }
+            ViewMode::Downloads => Vec::new(),
+        };
+
+        if !tracks.is_empty() {
+            if let Some(ref dm) = self.download_manager {
+                match dm.queue_tracks(&tracks) {
+                    Ok(count) => {
+                        self.add_debug(format!("Queued {} tracks for download", count));
+                        self.refresh_download_list();
+                    }
+                    Err(e) => {
+                        self.add_debug(format!("Failed to queue downloads: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
+    fn refresh_download_list(&mut self) {
+        if let Some(ref dm) = self.download_manager {
+            self.download_records = dm.get_all_downloads().unwrap_or_default();
+        }
+    }
+
+    fn delete_selected_download(&mut self) {
+        if self.download_records.is_empty() {
+            return;
+        }
+
+        let record = &self.download_records[self.selected_download];
+        let track_id = record.track_id;
+
+        if let Some(ref dm) = self.download_manager {
+            match dm.delete_download(track_id) {
+                Ok(_) => {
+                    self.add_debug(format!("Deleted download: {}", record.title));
+                    self.refresh_download_list();
+                    if self.selected_download > 0 && self.selected_download >= self.download_records.len() {
+                        self.selected_download = self.download_records.len().saturating_sub(1);
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to delete download: {}", e));
+                }
+            }
+        }
+    }
+
+    fn retry_selected_download(&mut self) {
+        if self.download_records.is_empty() {
+            return;
+        }
+
+        let record = &self.download_records[self.selected_download];
+        if record.status != download_db::DownloadStatus::Failed {
+            return;
+        }
+
+        let track_id = record.track_id;
+
+        if let Some(ref dm) = self.download_manager {
+            match dm.retry_failed(track_id) {
+                Ok(_) => {
+                    self.add_debug(format!("Retrying download: {}", record.title));
+                    self.refresh_download_list();
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to retry download: {}", e));
+                }
+            }
+        }
+    }
+
+    async fn process_downloads(&mut self) {
+        if let Some(ref dm) = self.download_manager {
+            match dm.process_next_download(&mut self.tidal_client, &mut self.debug_log).await {
+                Ok(processed) => {
+                    if processed {
+                        self.refresh_download_list();
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!("Download error: {}", e));
+                }
+            }
+        }
+    }
+
+    fn handle_download_events(&mut self) {
+        // Collect events first to avoid borrow conflicts
+        let events: Vec<downloads::DownloadEvent> = if let Some(ref mut rx) = self.download_event_rx {
+            let mut collected = Vec::new();
+            while let Ok(event) = rx.try_recv() {
+                collected.push(event);
+            }
+            collected
+        } else {
+            return;
+        };
+
+        // Now process the collected events
+        let mut needs_refresh = false;
+        for event in events {
+            match event {
+                downloads::DownloadEvent::Started { title, .. } => {
+                    self.add_debug(format!("Started downloading: {}", title));
+                }
+                downloads::DownloadEvent::Completed { .. } => {
+                    needs_refresh = true;
+                }
+                downloads::DownloadEvent::Failed { error, .. } => {
+                    self.add_debug(format!("Download failed: {}", error));
+                    needs_refresh = true;
+                }
+                downloads::DownloadEvent::QueueUpdated => {
+                    needs_refresh = true;
+                }
+                downloads::DownloadEvent::Progress { .. } => {
+                    needs_refresh = true;
+                }
+            }
+        }
+
+        if needs_refresh {
+            self.refresh_download_list();
+        }
+    }
 }
 
 #[tokio::main]
@@ -1043,8 +1260,13 @@ async fn run_app<B: ratatui::backend::Backend>(
                 app.save_queue_state().await;
                 app.queue_dirty = false;
             }
+            // Process pending downloads
+            app.process_downloads().await;
             last_status_check = std::time::Instant::now();
         }
+
+        // Handle download events
+        app.handle_download_events();
 
         terminal.draw(|f| ui(f, app))?;
 
@@ -1419,6 +1641,43 @@ async fn run_app<B: ratatui::backend::Backend>(
                         }
                     }
 
+                    // Download controls
+                    // Shift+D: Download selected track
+                    KeyCode::Char('O') => {
+                        app.download_selected_track();
+                    }
+                    // Shift+A: Download all tracks in view (disabled to not conflict with other bindings)
+                    // KeyCode::Char('A') => {
+                    //     app.download_all_tracks();
+                    // }
+
+                    // o: Toggle offline mode
+                    KeyCode::Char('o') => {
+                        app.offline_mode = !app.offline_mode;
+                        app.add_debug(format!("Offline mode: {}", if app.offline_mode { "ON" } else { "OFF" }));
+                    }
+
+                    // Shift+W: Open downloads view
+                    KeyCode::Char('W') => {
+                        app.view_mode = ViewMode::Downloads;
+                        app.refresh_download_list();
+                        app.add_debug("Downloads view".to_string());
+                    }
+
+                    // x: Delete download (in downloads view)
+                    KeyCode::Char('x') => {
+                        if app.view_mode == ViewMode::Downloads {
+                            app.delete_selected_download();
+                        }
+                    }
+
+                    // R: Retry failed download (in downloads view)
+                    KeyCode::Char('R') => {
+                        if app.view_mode == ViewMode::Downloads {
+                            app.retry_selected_download();
+                        }
+                    }
+
                     _ => {}
                 }
             }
@@ -1464,6 +1723,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         match app.view_mode {
             ViewMode::Browse => "Browse",
             ViewMode::Search => "Search",
+            ViewMode::Downloads => "Downloads",
         }
     );
 
@@ -1503,10 +1763,10 @@ fn ui(f: &mut Frame, app: &mut App) {
             .split(content_area);
 
         // Render main content on the left
-        if app.view_mode == ViewMode::Browse {
-            render_browse_view(f, app, content_chunks[0]);
-        } else {
-            render_search_view(f, app, content_chunks[0]);
+        match app.view_mode {
+            ViewMode::Browse => render_browse_view(f, app, content_chunks[0]),
+            ViewMode::Search => render_search_view(f, app, content_chunks[0]),
+            ViewMode::Downloads => render_downloads_view(f, app, content_chunks[0]),
         }
 
         // Render queue on the right
@@ -1516,10 +1776,10 @@ fn ui(f: &mut Frame, app: &mut App) {
         // Clear queue clickable area since it's not visible
         app.clickable_areas.queue_list = None;
 
-        if app.view_mode == ViewMode::Browse {
-            render_browse_view(f, app, content_area);
-        } else {
-            render_search_view(f, app, content_area);
+        match app.view_mode {
+            ViewMode::Browse => render_browse_view(f, app, content_area),
+            ViewMode::Search => render_search_view(f, app, content_area),
+            ViewMode::Downloads => render_downloads_view(f, app, content_area),
         }
     }
     chunk_index += 1;
@@ -1923,6 +2183,108 @@ fn render_queue(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         queue_list,
         area,
         &mut ratatui::widgets::ListState::default().with_selected(Some(app.selected_queue_item)),
+    );
+}
+
+fn render_downloads_view(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    // Clear other clickable areas when in downloads view
+    app.clickable_areas.left_list = None;
+    app.clickable_areas.right_list = Some(area);
+
+    if app.download_records.is_empty() {
+        let empty_msg = Paragraph::new("No downloads\n\nPress 'O' on a track to download it\nPress 'b' to return to browse mode")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .title(format!("Downloads [o: offline {}]",
+                        if app.offline_mode { "ON" } else { "OFF" }))
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Magenta)),
+            );
+        f.render_widget(empty_msg, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .download_records
+        .iter()
+        .enumerate()
+        .map(|(i, record)| {
+            let style = if i == app.selected_download {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            let status_icon = match record.status {
+                download_db::DownloadStatus::Pending => "...",
+                download_db::DownloadStatus::Downloading => {
+                    let progress = if record.total_bytes > 0 {
+                        (record.progress_bytes as f64 / record.total_bytes as f64 * 100.0) as u8
+                    } else {
+                        0
+                    };
+                    // Show progress percentage inline
+                    return ListItem::new(format!(
+                        "[{:>3}%] {} - {} ({})",
+                        progress,
+                        record.artist,
+                        record.title,
+                        downloads::format_bytes(record.progress_bytes)
+                    )).style(style.fg(Color::Cyan));
+                }
+                download_db::DownloadStatus::Completed => "[OK]",
+                download_db::DownloadStatus::Failed => "[X]",
+                download_db::DownloadStatus::Paused => "[||]",
+            };
+
+            let status_color = match record.status {
+                download_db::DownloadStatus::Completed => Color::Green,
+                download_db::DownloadStatus::Failed => Color::Red,
+                download_db::DownloadStatus::Downloading => Color::Cyan,
+                download_db::DownloadStatus::Paused => Color::Yellow,
+                download_db::DownloadStatus::Pending => Color::DarkGray,
+            };
+
+            let content = format!(
+                "{} {} - {}",
+                status_icon,
+                record.artist,
+                record.title,
+            );
+
+            ListItem::new(content).style(style.fg(status_color))
+        })
+        .collect();
+
+    let (pending, completed, failed) = app.download_manager
+        .as_ref()
+        .and_then(|dm| dm.get_download_counts().ok())
+        .unwrap_or((0, 0, 0));
+
+    let title = format!(
+        "Downloads [{}p {}ok {}fail] [o: offline {} | x: delete | R: retry | b: back]",
+        pending, completed, failed,
+        if app.offline_mode { "ON" } else { "OFF" }
+    );
+
+    let downloads_list = List::new(items)
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD))
+        .highlight_symbol("> ");
+
+    f.render_stateful_widget(
+        downloads_list,
+        area,
+        &mut ratatui::widgets::ListState::default().with_selected(Some(app.selected_download)),
     );
 }
 
