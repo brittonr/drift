@@ -53,6 +53,7 @@ pub struct LibraryState {
     pub selected_track: usize,
     pub selected_album: usize,
     pub selected_artist: usize,
+    pub selected_history: usize,
     pub loaded: bool,
 }
 

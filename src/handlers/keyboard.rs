@@ -313,6 +313,12 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 if !app.favorite_tracks.is_empty() && app.library.selected_track < app.favorite_tracks.len() {
                     app.remove_favorite_track(app.library.selected_track).await;
                 }
+            } else if app.view_mode == ViewMode::Library && app.library.tab == LibraryTab::History {
+                // Add history track to favorites
+                if app.library.selected_history < app.history_entries.len() {
+                    let track = crate::tidal::Track::from(&app.history_entries[app.library.selected_history]);
+                    app.add_favorite_track(track).await;
+                }
             } else {
                 // Add selected track to favorites
                 if let Some(track) = app.get_selected_track() {
@@ -469,6 +475,16 @@ async fn handle_yank(app: &mut App) {
                 }
             }
         }
+    } else if app.view_mode == ViewMode::Library && app.library.tab == LibraryTab::History {
+        // Add history track to queue
+        if app.library.selected_history < app.history_entries.len() {
+            let track = crate::tidal::Track::from(&app.history_entries[app.library.selected_history]);
+            if let Err(e) = app.add_track_to_queue(track).await {
+                app.add_debug(format!("Failed to add track: {}", e));
+            } else {
+                app.playback.queue_dirty = true;
+            }
+        }
     } else if let Err(e) = app.add_selected_track_to_queue().await {
         app.add_debug(format!("Failed to add track: {}", e));
     } else {
@@ -569,9 +585,10 @@ fn handle_tab(app: &mut App) {
         app.library.tab = match app.library.tab {
             LibraryTab::Tracks => LibraryTab::Albums,
             LibraryTab::Albums => LibraryTab::Artists,
-            LibraryTab::Artists => LibraryTab::Tracks,
+            LibraryTab::Artists => LibraryTab::History,
+            LibraryTab::History => LibraryTab::Tracks,
         };
-        app.add_debug(format!("Switched to {:?} favorites", app.library.tab));
+        app.add_debug(format!("Switched to {:?} tab", app.library.tab));
     } else if app.view_mode == ViewMode::Search {
         app.search.tab = match app.search.tab {
             SearchTab::Tracks => SearchTab::Albums,

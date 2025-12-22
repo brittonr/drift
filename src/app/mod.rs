@@ -13,6 +13,7 @@ use crate::album_art::AlbumArtCache;
 use crate::cava::CavaVisualizer;
 use crate::config::Config;
 use crate::download_db::DownloadRecord;
+use crate::history_db::{HistoryDb, HistoryEntry};
 use crate::mpd::{CurrentSong, MpdController, QueueItem};
 use crate::queue_persistence::{self, PersistedQueue};
 use crate::tidal::{Album, Artist, Playlist, SearchResults, TidalClient, Track};
@@ -76,6 +77,10 @@ pub struct App {
     pub artist_detail: ArtistDetailState,
     pub album_detail: AlbumDetailState,
     pub navigation_history: Vec<ViewMode>,
+
+    // Playback history
+    pub history_db: Option<HistoryDb>,
+    pub history_entries: Vec<HistoryEntry>,
 
     // Configuration
     pub config: Config,
@@ -200,6 +205,19 @@ impl App {
                 }
             };
 
+        // Initialize playback history database
+        let (history_db, history_entries) = match HistoryDb::new() {
+            Ok(db) => {
+                let entries = db.get_recent(100).unwrap_or_default();
+                debug_log.push_back(format!("History database initialized ({} entries)", entries.len()));
+                (Some(db), entries)
+            }
+            Err(e) => {
+                debug_log.push_back(format!("Could not initialize history: {}", e));
+                (None, Vec::new())
+            }
+        };
+
         let default_volume = config.playback.default_volume;
         let show_visualizer = config.ui.show_visualizer;
 
@@ -238,6 +256,8 @@ impl App {
             artist_detail: ArtistDetailState::default(),
             album_detail: AlbumDetailState::default(),
             navigation_history: Vec::new(),
+            history_db,
+            history_entries,
             config,
         })
     }
@@ -502,6 +522,21 @@ impl App {
             }
             Err(e) => {
                 self.add_debug(format!("Failed to load album tracks: {}", e));
+            }
+        }
+    }
+
+    /// Record a track to playback history
+    pub fn record_history(&mut self, track: &Track) {
+        if let Some(ref db) = self.history_db {
+            match db.record_play(track) {
+                Ok(()) => {
+                    // Refresh the cached list
+                    self.history_entries = db.get_recent(100).unwrap_or_default();
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to record history: {}", e));
+                }
             }
         }
     }

@@ -34,6 +34,9 @@ impl App {
                 LibraryTab::Artists if !self.favorite_artists.is_empty() => {
                     self.library.selected_artist = (self.library.selected_artist + 1).min(self.favorite_artists.len() - 1);
                 }
+                LibraryTab::History if !self.history_entries.is_empty() => {
+                    self.library.selected_history = (self.library.selected_history + 1).min(self.history_entries.len() - 1);
+                }
                 _ => {}
             }
         } else if self.view_mode == ViewMode::Browse {
@@ -87,6 +90,9 @@ impl App {
                 }
                 LibraryTab::Artists if self.library.selected_artist > 0 => {
                     self.library.selected_artist -= 1;
+                }
+                LibraryTab::History if self.library.selected_history > 0 => {
+                    self.library.selected_history -= 1;
                 }
                 _ => {}
             }
@@ -143,6 +149,13 @@ impl App {
             }
         } else if self.view_mode == ViewMode::AlbumDetail {
             self.album_detail.selected_track = 0;
+        } else if self.view_mode == ViewMode::Library {
+            match self.library.tab {
+                LibraryTab::Tracks => self.library.selected_track = 0,
+                LibraryTab::Albums => self.library.selected_album = 0,
+                LibraryTab::Artists => self.library.selected_artist = 0,
+                LibraryTab::History => self.library.selected_history = 0,
+            }
         } else if self.view_mode == ViewMode::Browse {
             if self.browse.selected_tab == 0 {
                 self.browse.selected_playlist = 0;
@@ -170,6 +183,22 @@ impl App {
         } else if self.view_mode == ViewMode::AlbumDetail {
             if !self.album_detail.tracks.is_empty() {
                 self.album_detail.selected_track = self.album_detail.tracks.len() - 1;
+            }
+        } else if self.view_mode == ViewMode::Library {
+            match self.library.tab {
+                LibraryTab::Tracks if !self.favorite_tracks.is_empty() => {
+                    self.library.selected_track = self.favorite_tracks.len() - 1;
+                }
+                LibraryTab::Albums if !self.favorite_albums.is_empty() => {
+                    self.library.selected_album = self.favorite_albums.len() - 1;
+                }
+                LibraryTab::Artists if !self.favorite_artists.is_empty() => {
+                    self.library.selected_artist = self.favorite_artists.len() - 1;
+                }
+                LibraryTab::History if !self.history_entries.is_empty() => {
+                    self.library.selected_history = self.history_entries.len() - 1;
+                }
+                _ => {}
             }
         } else if self.view_mode == ViewMode::Browse {
             if self.browse.selected_tab == 0 && !self.playlists.is_empty() {

@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -6,6 +7,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::history_db::HistoryEntry;
 use crate::tidal::{Album, Artist, TidalClient, Track};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -13,6 +15,7 @@ pub enum LibraryTab {
     Tracks,
     Albums,
     Artists,
+    History,
 }
 
 pub struct LibraryViewState<'a> {
@@ -20,9 +23,28 @@ pub struct LibraryViewState<'a> {
     pub favorite_tracks: &'a [Track],
     pub favorite_albums: &'a [Album],
     pub favorite_artists: &'a [Artist],
+    pub history_entries: &'a [HistoryEntry],
     pub selected_favorite_track: usize,
     pub selected_favorite_album: usize,
     pub selected_favorite_artist: usize,
+    pub selected_history_entry: usize,
+}
+
+fn format_time_ago(played_at: DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let duration = now.signed_duration_since(played_at);
+
+    if duration.num_minutes() < 1 {
+        "just now".to_string()
+    } else if duration.num_minutes() < 60 {
+        format!("{}m ago", duration.num_minutes())
+    } else if duration.num_hours() < 24 {
+        format!("{}h ago", duration.num_hours())
+    } else if duration.num_days() < 7 {
+        format!("{}d ago", duration.num_days())
+    } else {
+        played_at.format("%Y-%m-%d").to_string()
+    }
 }
 
 pub fn render_library_view(
@@ -58,6 +80,15 @@ pub fn render_library_view(
         Span::styled(
             " Artists ",
             if state.library_tab == LibraryTab::Artists {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            " History ",
+            if state.library_tab == LibraryTab::History {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
@@ -151,6 +182,33 @@ pub fn render_library_view(
                 .block(
                     Block::default()
                         .title(format!("Favorite Artists ({}) [Enter: add top tracks]", count))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                );
+            f.render_widget(list, content_area);
+        }
+        LibraryTab::History => {
+            let items: Vec<ListItem> = state
+                .history_entries
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| {
+                    let style = if i == state.selected_history_entry {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    let time_ago = format_time_ago(entry.played_at);
+                    let display = format!("{} - {} [{}]", entry.artist, entry.title, time_ago);
+                    ListItem::new(display).style(style)
+                })
+                .collect();
+
+            let count = state.history_entries.len();
+            let list = List::new(items)
+                .block(
+                    Block::default()
+                        .title(format!("Playback History ({}) [p: play | y: queue | f: favorite]", count))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Cyan)),
                 );

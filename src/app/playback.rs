@@ -41,6 +41,7 @@ impl App {
         }
 
         self.playback.is_playing = true;
+        self.record_history(&track);
         self.current_track = Some(track);
         self.add_debug("Playback started".to_string());
         Ok(())
@@ -67,10 +68,14 @@ impl App {
                 }
             }
             ViewMode::Library => {
-                if self.library.tab == LibraryTab::Tracks && self.library.selected_track < self.favorite_tracks.len() {
-                    self.favorite_tracks[self.library.selected_track].clone()
-                } else {
-                    return Ok(());
+                match self.library.tab {
+                    LibraryTab::Tracks if self.library.selected_track < self.favorite_tracks.len() => {
+                        self.favorite_tracks[self.library.selected_track].clone()
+                    }
+                    LibraryTab::History if self.library.selected_history < self.history_entries.len() => {
+                        crate::tidal::Track::from(&self.history_entries[self.library.selected_history])
+                    }
+                    _ => return Ok(()),
                 }
             }
             ViewMode::Downloads | ViewMode::ArtistDetail | ViewMode::AlbumDetail => return Ok(()),

@@ -4,6 +4,7 @@ mod cava;
 mod album_art;
 mod queue_persistence;
 mod download_db;
+mod history_db;
 mod downloads;
 mod config;
 mod app;
@@ -313,9 +314,11 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 favorite_tracks: &app.favorite_tracks,
                 favorite_albums: &app.favorite_albums,
                 favorite_artists: &app.favorite_artists,
+                history_entries: &app.history_entries,
                 selected_favorite_track: app.library.selected_track,
                 selected_favorite_album: app.library.selected_album,
                 selected_favorite_artist: app.library.selected_artist,
+                selected_history_entry: app.library.selected_history,
             };
             app.clickable_areas.left_list = None;
             let right = render_library_view(f, &library_state, area);
