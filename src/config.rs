@@ -16,6 +16,7 @@ pub struct Config {
     pub ui: UiConfig,
     pub downloads: DownloadsConfig,
     pub theme: Theme,
+    pub service: ServiceConfig,
 }
 
 impl Default for Config {
@@ -26,6 +27,23 @@ impl Default for Config {
             ui: UiConfig::default(),
             downloads: DownloadsConfig::default(),
             theme: Theme::default(),
+            service: ServiceConfig::default(),
+        }
+    }
+}
+
+/// Music service configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServiceConfig {
+    /// Music service to use: "tidal" or "youtube"
+    pub service: String,
+}
+
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        Self {
+            service: "tidal".to_string(),
         }
     }
 }

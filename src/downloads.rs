@@ -9,16 +9,16 @@ use tokio::sync::{mpsc, Semaphore};
 
 use crate::config::DownloadsConfig;
 use crate::download_db::{DownloadDb, DownloadRecord, SyncedPlaylist};
-use crate::tidal::{Playlist, TidalClient, Track};
+use crate::service::{MusicService, Playlist, Track};
 
 const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 2;
 
 #[derive(Debug, Clone)]
 pub enum DownloadEvent {
-    Started { track_id: u64, title: String },
-    Progress { track_id: u64, downloaded: u64, total: u64 },
-    Completed { track_id: u64, path: String },
-    Failed { track_id: u64, error: String },
+    Started { track_id: String, title: String },
+    Progress { track_id: String, downloaded: u64, total: u64 },
+    Completed { track_id: String, path: String },
+    Failed { track_id: String, error: String },
     QueueUpdated,
     PlaylistSynced { playlist_id: String, name: String, new_tracks: usize },
 }
@@ -90,11 +90,11 @@ impl DownloadManager {
         Ok(count)
     }
 
-    pub fn is_downloaded(&self, track_id: u64) -> bool {
+    pub fn is_downloaded(&self, track_id: &str) -> bool {
         self.db.is_downloaded(track_id)
     }
 
-    pub fn get_local_path(&self, track_id: u64) -> Option<String> {
+    pub fn get_local_path(&self, track_id: &str) -> Option<String> {
         self.db.get_local_path(track_id)
     }
 
@@ -114,7 +114,7 @@ impl DownloadManager {
         self.db.get_download_count()
     }
 
-    pub fn delete_download(&self, track_id: u64) -> Result<()> {
+    pub fn delete_download(&self, track_id: &str) -> Result<()> {
         if let Some(path) = self.db.delete_download(track_id)? {
             // Try to delete the file
             if let Err(e) = std::fs::remove_file(&path) {
@@ -128,7 +128,7 @@ impl DownloadManager {
         Ok(())
     }
 
-    pub fn retry_failed(&self, track_id: u64) -> Result<()> {
+    pub fn retry_failed(&self, track_id: &str) -> Result<()> {
         self.db.retry_failed(track_id)?;
         let _ = self.event_tx.send(DownloadEvent::QueueUpdated);
         Ok(())
@@ -148,7 +148,7 @@ impl DownloadManager {
 
     pub async fn process_next_download(
         &self,
-        tidal: &mut TidalClient,
+        music_service: &mut Box<dyn MusicService>,
         debug_log: &mut VecDeque<String>,
     ) -> Result<bool> {
         if self.is_paused {
@@ -175,25 +175,25 @@ impl DownloadManager {
         debug_log.push_back(format!("Starting download: {} - {}", track.artist, track.title));
 
         let _ = self.event_tx.send(DownloadEvent::Started {
-            track_id: track.id,
+            track_id: track.id.clone(),
             title: track.title.clone(),
         });
 
         // Perform the download
-        match self.download_track(&track, tidal, debug_log).await {
+        match self.download_track(&track, music_service, debug_log).await {
             Ok(path) => {
                 debug_log.push_back(format!("Download complete: {}", track.title));
                 let _ = self.event_tx.send(DownloadEvent::Completed {
-                    track_id: track.id,
+                    track_id: track.id.clone(),
                     path,
                 });
             }
             Err(e) => {
                 let error = e.to_string();
                 debug_log.push_back(format!("Download failed: {} - {}", track.title, error));
-                self.db.mark_failed(track.id, &error)?;
+                self.db.mark_failed(&track.id, &error)?;
                 let _ = self.event_tx.send(DownloadEvent::Failed {
-                    track_id: track.id,
+                    track_id: track.id.clone(),
                     error,
                 });
             }
@@ -206,12 +206,12 @@ impl DownloadManager {
     async fn download_track(
         &self,
         track: &Track,
-        tidal: &mut TidalClient,
+        music_service: &mut Box<dyn MusicService>,
         debug_log: &mut VecDeque<String>,
     ) -> Result<String> {
         // Get stream URL (time-limited, must download immediately)
         debug_log.push_back(format!("Getting stream URL for: {}", track.title));
-        let stream_url = tidal.get_stream_url(&track.id.to_string()).await?;
+        let stream_url = music_service.get_stream_url(&track.id).await?;
 
         // Determine file path
         let file_path = self.get_download_path(track);
@@ -230,7 +230,7 @@ impl DownloadManager {
         }
 
         let total_size = response.content_length().unwrap_or(0);
-        self.db.update_progress(track.id, 0, total_size)?;
+        self.db.update_progress(&track.id, 0, total_size)?;
 
         let mut file = File::create(&file_path).await?;
         let mut stream = response.bytes_stream();
@@ -244,9 +244,9 @@ impl DownloadManager {
 
             // Update progress every ~256KB
             if downloaded - last_progress_update > 256 * 1024 {
-                self.db.update_progress(track.id, downloaded, total_size)?;
+                self.db.update_progress(&track.id, downloaded, total_size)?;
                 let _ = self.event_tx.send(DownloadEvent::Progress {
-                    track_id: track.id,
+                    track_id: track.id.clone(),
                     downloaded,
                     total: total_size,
                 });
@@ -262,7 +262,7 @@ impl DownloadManager {
 
         // Mark complete in database
         let path_str = file_path.to_string_lossy().to_string();
-        self.db.mark_completed(track.id, &path_str)?;
+        self.db.mark_completed(&track.id, &path_str)?;
 
         Ok(path_str)
     }
@@ -391,7 +391,7 @@ impl DownloadManager {
         self.db.get_playlist_new_tracks(playlist_id, current_tracks)
     }
 
-    pub fn get_downloaded_track_ids(&self) -> Result<std::collections::HashSet<u64>> {
+    pub fn get_downloaded_track_ids(&self) -> Result<std::collections::HashSet<String>> {
         self.db.get_downloaded_track_ids()
     }
 }

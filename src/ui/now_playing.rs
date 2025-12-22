@@ -9,7 +9,7 @@ use ratatui::{
 use crate::album_art::AlbumArtCache;
 use crate::app::state::RadioSeed;
 use crate::mpd::CurrentSong;
-use crate::tidal::Track;
+use crate::service::{CoverArt, Track};
 
 use super::theme::Theme;
 
@@ -44,7 +44,12 @@ pub fn render_now_playing(
     let info_area = chunks[1];
 
     let has_album_art = if let Some(track) = state.current_track {
-        if let Some(ref cover_id) = track.album_cover_id {
+        let cover_id = match &track.cover_art {
+            CoverArt::ServiceId { id, .. } => Some(id.as_str()),
+            CoverArt::Url(url) => Some(url.as_str()),
+            CoverArt::None => None,
+        };
+        if let Some(cover_id) = cover_id {
             if state.album_art_cache.has_cached(cover_id, 320) {
                 let _ = state.album_art_cache.set_current_image(cover_id, 320);
 

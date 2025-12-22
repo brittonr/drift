@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tidal::{Album, Track};
+use crate::service::{Album, Track};
 use super::styles::{format_track_with_indicator, is_track_playing};
 use super::theme::Theme;
 
@@ -13,7 +13,7 @@ pub struct AlbumDetailViewState<'a> {
     pub album: Option<&'a Album>,
     pub tracks: &'a [Track],
     pub selected_track: usize,
-    pub current_track_id: Option<u64>,
+    pub current_track_id: Option<&'a str>,
 }
 
 pub fn render_album_detail_view(f: &mut Frame, state: &AlbumDetailViewState, area: Rect, theme: &Theme) -> Rect {
@@ -28,7 +28,7 @@ pub fn render_album_detail_view(f: &mut Frame, state: &AlbumDetailViewState, are
         .enumerate()
         .map(|(i, track)| {
             let is_selected = i == state.selected_track;
-            let is_playing = is_track_playing(track.id, state.current_track_id);
+            let is_playing = is_track_playing(&track.id, state.current_track_id);
             let style = theme.track_style(is_selected, is_playing);
 
             // Show track number

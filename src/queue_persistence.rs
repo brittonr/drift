@@ -3,20 +3,26 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::tidal::Track;
+use crate::service::{CoverArt, ServiceType, Track};
 
 const QUEUE_FILE_NAME: &str = "queue.toml";
-const CURRENT_VERSION: u32 = 1;
+const CURRENT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedTrack {
-    pub id: u64,
+    pub id: String,
     pub title: String,
     pub artist: String,
     pub album: String,
     pub duration_seconds: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub album_cover_id: Option<String>,
+    pub cover_art_id: Option<String>,
+    #[serde(default = "default_service")]
+    pub service: String,
+}
+
+fn default_service() -> String {
+    "tidal".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,26 +57,34 @@ impl PersistedQueue {
 
 impl From<&Track> for PersistedTrack {
     fn from(track: &Track) -> Self {
+        let cover_art_id = match &track.cover_art {
+            CoverArt::ServiceId { id, .. } => Some(id.clone()),
+            CoverArt::Url(url) => Some(url.clone()),
+            CoverArt::None => None,
+        };
         Self {
-            id: track.id,
+            id: track.id.clone(),
             title: track.title.clone(),
             artist: track.artist.clone(),
             album: track.album.clone(),
             duration_seconds: track.duration_seconds,
-            album_cover_id: track.album_cover_id.clone(),
+            cover_art_id,
+            service: track.service.to_string(),
         }
     }
 }
 
 impl From<&PersistedTrack> for Track {
     fn from(pt: &PersistedTrack) -> Self {
+        let service = pt.service.parse().unwrap_or(ServiceType::Tidal);
         Self {
-            id: pt.id,
+            id: pt.id.clone(),
             title: pt.title.clone(),
             artist: pt.artist.clone(),
             album: pt.album.clone(),
             duration_seconds: pt.duration_seconds,
-            album_cover_id: pt.album_cover_id.clone(),
+            cover_art: CoverArt::from_tidal_option(pt.cover_art_id.clone()),
+            service,
         }
     }
 }
@@ -110,8 +124,16 @@ pub fn load_queue() -> Result<Option<PersistedQueue>> {
         }
     };
 
-    match toml::from_str(&contents) {
-        Ok(queue) => Ok(Some(queue)),
+    match toml::from_str::<PersistedQueue>(&contents) {
+        Ok(queue) => {
+            // Version check - only load if version matches
+            if queue.version != CURRENT_VERSION {
+                eprintln!("Warning: Queue file version mismatch (found {}, expected {}), starting fresh",
+                         queue.version, CURRENT_VERSION);
+                return Ok(None);
+            }
+            Ok(Some(queue))
+        }
         Err(e) => {
             eprintln!("Warning: Queue file corrupt, starting fresh: {}", e);
             Ok(None)
@@ -123,14 +145,15 @@ pub fn load_queue() -> Result<Option<PersistedQueue>> {
 mod tests {
     use super::*;
 
-    fn create_test_track(id: u64, title: &str, artist: &str) -> PersistedTrack {
+    fn create_test_track(id: &str, title: &str, artist: &str) -> PersistedTrack {
         PersistedTrack {
-            id,
+            id: id.to_string(),
             title: title.to_string(),
             artist: artist.to_string(),
             album: "Test Album".to_string(),
             duration_seconds: 180,
-            album_cover_id: Some("cover-123".to_string()),
+            cover_art_id: Some("cover-123".to_string()),
+            service: "tidal".to_string(),
         }
     }
 
@@ -138,7 +161,7 @@ mod tests {
     fn test_persisted_queue_new() {
         let queue = PersistedQueue::new();
 
-        assert_eq!(queue.version, 1);
+        assert_eq!(queue.version, CURRENT_VERSION);
         assert!(queue.tracks.is_empty());
         assert!(queue.current_position.is_none());
         assert!(queue.elapsed_seconds.is_none());
@@ -146,42 +169,43 @@ mod tests {
 
     #[test]
     fn test_persisted_track_serialization() {
-        let track = create_test_track(12345, "Test Song", "Test Artist");
+        let track = create_test_track("12345", "Test Song", "Test Artist");
         let serialized = toml::to_string_pretty(&track).unwrap();
 
-        assert!(serialized.contains("id = 12345"));
+        assert!(serialized.contains("id = \"12345\""));
         assert!(serialized.contains("title = \"Test Song\""));
         assert!(serialized.contains("artist = \"Test Artist\""));
         assert!(serialized.contains("album = \"Test Album\""));
         assert!(serialized.contains("duration_seconds = 180"));
-        assert!(serialized.contains("album_cover_id = \"cover-123\""));
+        assert!(serialized.contains("cover_art_id = \"cover-123\""));
     }
 
     #[test]
     fn test_persisted_track_deserialization() {
         let toml_str = r#"
-id = 99999
+id = "99999"
 title = "Deserialized Track"
 artist = "Some Artist"
 album = "Some Album"
 duration_seconds = 240
-album_cover_id = "abc-def"
+cover_art_id = "abc-def"
+service = "tidal"
 "#;
 
         let track: PersistedTrack = toml::from_str(toml_str).unwrap();
 
-        assert_eq!(track.id, 99999);
+        assert_eq!(track.id, "99999");
         assert_eq!(track.title, "Deserialized Track");
         assert_eq!(track.artist, "Some Artist");
         assert_eq!(track.album, "Some Album");
         assert_eq!(track.duration_seconds, 240);
-        assert_eq!(track.album_cover_id, Some("abc-def".to_string()));
+        assert_eq!(track.cover_art_id, Some("abc-def".to_string()));
     }
 
     #[test]
     fn test_persisted_track_without_cover_id() {
         let toml_str = r#"
-id = 11111
+id = "11111"
 title = "No Cover Track"
 artist = "Artist"
 album = "Album"
@@ -190,15 +214,15 @@ duration_seconds = 120
 
         let track: PersistedTrack = toml::from_str(toml_str).unwrap();
 
-        assert_eq!(track.id, 11111);
-        assert!(track.album_cover_id.is_none());
+        assert_eq!(track.id, "11111");
+        assert!(track.cover_art_id.is_none());
     }
 
     #[test]
     fn test_persisted_queue_serialization_roundtrip() {
         let mut queue = PersistedQueue::new();
-        queue.tracks.push(create_test_track(1, "Song One", "Artist A"));
-        queue.tracks.push(create_test_track(2, "Song Two", "Artist B"));
+        queue.tracks.push(create_test_track("1", "Song One", "Artist A"));
+        queue.tracks.push(create_test_track("2", "Song Two", "Artist B"));
         queue.current_position = Some(1);
         queue.elapsed_seconds = Some(45);
 
@@ -218,7 +242,7 @@ duration_seconds = 120
         let queue = PersistedQueue::new();
         let serialized = toml::to_string_pretty(&queue).unwrap();
 
-        assert!(serialized.contains("version = 1"));
+        assert!(serialized.contains(&format!("version = {}", CURRENT_VERSION)));
         assert!(serialized.contains("tracks = []"));
         // Optional fields should not appear when None
         assert!(!serialized.contains("current_position"));
@@ -227,13 +251,13 @@ duration_seconds = 120
 
     #[test]
     fn test_queue_with_position_only() {
-        let toml_str = r#"
-version = 1
+        let toml_str = format!(r#"
+version = {}
 tracks = []
 current_position = 5
-"#;
+"#, CURRENT_VERSION);
 
-        let queue: PersistedQueue = toml::from_str(toml_str).unwrap();
+        let queue: PersistedQueue = toml::from_str(&toml_str).unwrap();
 
         assert_eq!(queue.current_position, Some(5));
         assert!(queue.elapsed_seconds.is_none());
@@ -253,12 +277,13 @@ tracks = []
     #[test]
     fn test_special_characters_in_track_title() {
         let track = PersistedTrack {
-            id: 1,
+            id: "1".to_string(),
             title: "Track with \"quotes\" and 'apostrophes'".to_string(),
             artist: "Artist with\nnewline".to_string(),
             album: "Album with\ttab".to_string(),
             duration_seconds: 60,
-            album_cover_id: None,
+            cover_art_id: None,
+            service: "tidal".to_string(),
         };
 
         let serialized = toml::to_string_pretty(&track).unwrap();
@@ -272,12 +297,13 @@ tracks = []
     #[test]
     fn test_unicode_in_track_metadata() {
         let track = PersistedTrack {
-            id: 1,
+            id: "1".to_string(),
             title: "日本語タイトル".to_string(),
             artist: "アーティスト名".to_string(),
             album: "Альбом на русском".to_string(),
             duration_seconds: 300,
-            album_cover_id: None,
+            cover_art_id: None,
+            service: "tidal".to_string(),
         };
 
         let serialized = toml::to_string_pretty(&track).unwrap();
@@ -292,7 +318,7 @@ tracks = []
     fn test_large_queue() {
         let mut queue = PersistedQueue::new();
         for i in 0..100 {
-            queue.tracks.push(create_test_track(i, &format!("Track {}", i), "Artist"));
+            queue.tracks.push(create_test_track(&i.to_string(), &format!("Track {}", i), "Artist"));
         }
         queue.current_position = Some(50);
 

@@ -102,7 +102,7 @@ impl App {
             } else if self.browse.selected_tab == 1 && self.browse.selected_track > 0 {
                 self.browse.selected_track -= 1;
             }
-        } else if let Some(ref results) = self.search_results {
+        } else if self.search_results.is_some() {
             match self.search.tab {
                 SearchTab::Tracks if self.search.selected_track > 0 => {
                     self.search.selected_track -= 1;

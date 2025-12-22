@@ -415,7 +415,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 if app.view_mode == ViewMode::ArtistDetail {
                     // Artist detail view - use the viewed artist
                     if let Some(ref artist) = app.artist_detail.artist {
-                        app.playback.radio_seed = Some(RadioSeed::Artist(artist.id));
+                        app.playback.radio_seed = Some(RadioSeed::Artist(artist.id.clone()));
                         app.add_debug(format!("Artist Radio ON ({})", artist.name));
                     } else {
                         app.add_debug("No artist loaded for Radio".to_string());
@@ -432,7 +432,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                     // Library Artists tab - use selected favorite artist
                     if app.library.selected_artist < app.favorite_artists.len() {
                         let artist = &app.favorite_artists[app.library.selected_artist];
-                        app.playback.radio_seed = Some(RadioSeed::Artist(artist.id));
+                        app.playback.radio_seed = Some(RadioSeed::Artist(artist.id.clone()));
                         app.add_debug(format!("Artist Radio ON ({})", artist.name));
                     } else {
                         app.add_debug("No artist selected for Radio".to_string());
@@ -452,7 +452,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                             SearchTab::Artists => {
                                 if app.search.selected_artist < results.artists.len() {
                                     let artist = &results.artists[app.search.selected_artist];
-                                    app.playback.radio_seed = Some(RadioSeed::Artist(artist.id));
+                                    app.playback.radio_seed = Some(RadioSeed::Artist(artist.id.clone()));
                                     app.add_debug(format!("Artist Radio ON ({})", artist.name));
                                 } else {
                                     app.add_debug("No artist selected for Radio".to_string());
@@ -470,7 +470,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                             _ => {
                                 // Fall through to track-based radio
                                 if let Some(ref track) = app.current_track {
-                                    app.playback.radio_seed = Some(RadioSeed::Track(track.id));
+                                    app.playback.radio_seed = Some(RadioSeed::Track(track.id.clone()));
                                     app.add_debug(format!("Radio ON (seed: {})", track.title));
                                 } else {
                                     app.add_debug("No track playing for Radio seed".to_string());
@@ -478,7 +478,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                             }
                         }
                     } else if let Some(ref track) = app.current_track {
-                        app.playback.radio_seed = Some(RadioSeed::Track(track.id));
+                        app.playback.radio_seed = Some(RadioSeed::Track(track.id.clone()));
                         app.add_debug(format!("Radio ON (seed: {})", track.title));
                     } else {
                         app.add_debug("No track playing for Radio seed".to_string());
@@ -494,7 +494,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                     }
                 } else if let Some(ref track) = app.current_track {
                     // Fallback: use current playing track as seed
-                    app.playback.radio_seed = Some(RadioSeed::Track(track.id));
+                    app.playback.radio_seed = Some(RadioSeed::Track(track.id.clone()));
                     app.add_debug(format!("Radio ON (seed: {})", track.title));
                 } else {
                     app.add_debug("No track playing for Radio seed".to_string());
@@ -519,7 +519,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             } else if app.view_mode == ViewMode::Library && app.library.tab == LibraryTab::History {
                 // Add history track to favorites
                 if app.library.selected_history < app.history_entries.len() {
-                    let track = crate::tidal::Track::from(&app.history_entries[app.library.selected_history]);
+                    let track = crate::service::Track::from(&app.history_entries[app.library.selected_history]);
                     app.add_favorite_track(track).await;
                 }
             } else {
@@ -626,7 +626,7 @@ fn handle_add_to_playlist(app: &mut App) {
             if app.library.tab == LibraryTab::Tracks && app.library.selected_track < app.favorite_tracks.len() {
                 Some(app.favorite_tracks[app.library.selected_track].clone())
             } else if app.library.tab == LibraryTab::History && app.library.selected_history < app.history_entries.len() {
-                Some(crate::tidal::Track::from(&app.history_entries[app.library.selected_history]))
+                Some(crate::service::Track::from(&app.history_entries[app.library.selected_history]))
             } else {
                 None
             }
@@ -785,7 +785,7 @@ async fn handle_yank(app: &mut App) {
     } else if app.view_mode == ViewMode::Library && app.library.tab == LibraryTab::History {
         // Add history track to queue
         if app.library.selected_history < app.history_entries.len() {
-            let track = crate::tidal::Track::from(&app.history_entries[app.library.selected_history]);
+            let track = crate::service::Track::from(&app.history_entries[app.library.selected_history]);
             if let Err(e) = app.add_track_to_queue(track).await {
                 app.set_status_error(format!("Failed to add track: {}", e));
             } else {

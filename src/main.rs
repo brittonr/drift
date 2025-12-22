@@ -7,6 +7,7 @@ mod download_db;
 mod history_db;
 mod downloads;
 mod config;
+mod service;
 mod app;
 mod ui;
 mod handlers;
@@ -226,7 +227,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
             f,
             &app.local_queue,
             app.playback.selected_queue_item,
-            app.current_track.as_ref().map(|t| t.id),
+            app.current_track.as_ref().map(|t| t.id.as_str()),
             content_chunks[1],
             &theme,
         );
@@ -289,7 +290,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
 }
 
 fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect, theme: &ui::Theme) {
-    let current_track_id = app.current_track.as_ref().map(|t| t.id);
+    let current_track_id = app.current_track.as_ref().map(|t| t.id.as_str());
 
     match app.view_mode {
         ViewMode::Browse => {

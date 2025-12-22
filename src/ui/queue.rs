@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tidal::Track;
+use crate::service::Track;
 use super::styles::{format_track_with_indicator, is_track_playing};
 use super::theme::Theme;
 
@@ -13,7 +13,7 @@ pub fn render_queue(
     f: &mut Frame,
     local_queue: &[Track],
     selected_queue_item: usize,
-    current_track_id: Option<u64>,
+    current_track_id: Option<&str>,
     area: Rect,
     theme: &Theme,
 ) -> Rect {
@@ -36,7 +36,7 @@ pub fn render_queue(
 
     for (i, track) in local_queue.iter().enumerate() {
         let is_selected = i == selected_queue_item;
-        let is_playing = is_track_playing(track.id, current_track_id);
+        let is_playing = is_track_playing(&track.id, current_track_id);
         let style = theme.track_style(is_selected, is_playing);
 
         let duration_str = format!("{}:{:02}", track.duration_seconds / 60, track.duration_seconds % 60);

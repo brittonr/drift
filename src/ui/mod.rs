@@ -24,7 +24,6 @@ pub use library::{render_library_view, LibraryTab};
 pub use status_bar::render_status_bar;
 pub use artist_detail::render_artist_detail_view;
 pub use album_detail::render_album_detail_view;
-pub use styles::{format_track_with_indicator, is_track_playing};
 pub use help::{render_help_panel, HelpPanelState};
 pub use keybindings::help_content_height;
 pub use dialog::{render_dialog, DialogRenderState};

@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::history_db::HistoryEntry;
-use crate::tidal::{Album, Artist, TidalClient, Track};
+use crate::service::{Album, Artist, Track};
 use super::styles::{format_track_with_indicator, is_track_playing};
 use super::theme::Theme;
 
@@ -30,7 +30,7 @@ pub struct LibraryViewState<'a> {
     pub selected_favorite_album: usize,
     pub selected_favorite_artist: usize,
     pub selected_history_entry: usize,
-    pub current_track_id: Option<u64>,
+    pub current_track_id: Option<&'a str>,
 }
 
 fn format_time_ago(played_at: DateTime<Utc>) -> String {
@@ -121,10 +121,16 @@ pub fn render_library_view(
                 .enumerate()
                 .map(|(i, track)| {
                     let is_selected = i == state.selected_favorite_track;
-                    let is_playing = is_track_playing(track.id, state.current_track_id);
+                    let is_playing = is_track_playing(&track.id, state.current_track_id);
                     let style = theme.track_style(is_selected, is_playing);
 
-                    let display = TidalClient::format_track_display(track);
+                    let display = format!(
+                        "{} - {} ({}:{:02})",
+                        track.artist,
+                        track.title,
+                        track.duration_seconds / 60,
+                        track.duration_seconds % 60
+                    );
                     let display = format_track_with_indicator(display, is_playing);
                     ListItem::new(display).style(style)
                 })
@@ -204,7 +210,7 @@ pub fn render_library_view(
                 .enumerate()
                 .map(|(i, entry)| {
                     let is_selected = i == state.selected_history_entry;
-                    let is_playing = is_track_playing(entry.track_id, state.current_track_id);
+                    let is_playing = is_track_playing(&entry.track_id, state.current_track_id);
                     let style = theme.track_style(is_selected, is_playing);
 
                     let time_ago = format_time_ago(entry.played_at);

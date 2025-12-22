@@ -2,7 +2,7 @@ use super::App;
 use super::state::ViewMode;
 use crate::download_db::DownloadStatus;
 use crate::downloads::DownloadEvent;
-use crate::tidal::Track;
+use crate::service::Track;
 use crate::ui::library::LibraryTab;
 use crate::ui::search::SearchTab;
 
@@ -103,12 +103,13 @@ impl App {
         }
 
         let record = &self.download_records[self.downloads.selected];
-        let track_id = record.track_id;
+        let track_id = record.track_id.clone();
+        let title = record.title.clone();
 
         if let Some(ref dm) = self.download_manager {
-            match dm.delete_download(track_id) {
+            match dm.delete_download(&track_id) {
                 Ok(_) => {
-                    self.add_debug(format!("Deleted download: {}", record.title));
+                    self.add_debug(format!("Deleted download: {}", title));
                     self.refresh_download_list();
                     if self.downloads.selected > 0 && self.downloads.selected >= self.download_records.len() {
                         self.downloads.selected = self.download_records.len().saturating_sub(1);
@@ -131,12 +132,13 @@ impl App {
             return;
         }
 
-        let track_id = record.track_id;
+        let track_id = record.track_id.clone();
+        let title = record.title.clone();
 
         if let Some(ref dm) = self.download_manager {
-            match dm.retry_failed(track_id) {
+            match dm.retry_failed(&track_id) {
                 Ok(_) => {
-                    self.add_debug(format!("Retrying download: {}", record.title));
+                    self.add_debug(format!("Retrying download: {}", title));
                     self.refresh_download_list();
                 }
                 Err(e) => {
@@ -184,7 +186,7 @@ impl App {
 
     pub async fn process_downloads(&mut self) {
         if let Some(ref dm) = self.download_manager {
-            match dm.process_next_download(&mut self.tidal_client, &mut self.debug_log).await {
+            match dm.process_next_download(&mut self.music_service, &mut self.debug_log).await {
                 Ok(processed) => {
                     if processed {
                         self.refresh_download_list();

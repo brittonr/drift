@@ -20,7 +20,7 @@ pub fn track_style(is_selected: bool, is_playing: bool) -> Style {
 }
 
 /// Check if a track is currently playing
-pub fn is_track_playing(track_id: u64, current_track_id: Option<u64>) -> bool {
+pub fn is_track_playing(track_id: &str, current_track_id: Option<&str>) -> bool {
     current_track_id.map(|id| id == track_id).unwrap_or(false)
 }
 

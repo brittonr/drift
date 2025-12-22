@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tidal::{Album, Artist, TidalClient, Track};
+use crate::service::{Album, Artist, Track};
 use super::styles::{format_track_with_indicator, is_track_playing};
 use super::theme::Theme;
 
@@ -16,7 +16,7 @@ pub struct ArtistDetailViewState<'a> {
     pub selected_track: usize,
     pub selected_album: usize,
     pub selected_panel: usize, // 0 = top tracks, 1 = albums
-    pub current_track_id: Option<u64>,
+    pub current_track_id: Option<&'a str>,
 }
 
 pub fn render_artist_detail_view(
@@ -45,10 +45,16 @@ pub fn render_artist_detail_view(
         .enumerate()
         .map(|(i, track)| {
             let is_selected = state.selected_panel == 0 && i == state.selected_track;
-            let is_playing = is_track_playing(track.id, state.current_track_id);
+            let is_playing = is_track_playing(&track.id, state.current_track_id);
             let style = theme.track_style(is_selected, is_playing);
 
-            let display = TidalClient::format_track_display(track);
+            let display = format!(
+                "{} - {} ({}:{:02})",
+                track.artist,
+                track.title,
+                track.duration_seconds / 60,
+                track.duration_seconds % 60
+            );
             let display = format_track_with_indicator(display, is_playing);
             ListItem::new(display).style(style)
         })

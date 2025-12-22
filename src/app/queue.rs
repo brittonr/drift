@@ -3,7 +3,7 @@ use anyhow::Result;
 use super::App;
 use super::state::ViewMode;
 use crate::queue_persistence::{self, PersistedQueue};
-use crate::tidal::Track;
+use crate::service::Track;
 use crate::ui::search::SearchTab;
 
 impl App {
@@ -57,7 +57,7 @@ impl App {
         let mut added = 0;
         for pt in &persisted.tracks {
             let track = Track::from(pt);
-            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+            match self.music_service.get_stream_url(&track.id).await {
                 Ok(url) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add track {}: {}", track.title, e));
@@ -94,7 +94,7 @@ impl App {
         self.add_debug(format!("Adding to queue: {} - {}", track.artist, track.title));
 
         self.add_debug(format!("Getting stream URL for track ID {}...", track.id));
-        let stream_url = match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+        let stream_url = match self.music_service.get_stream_url(&track.id).await {
             Ok(url) => {
                 self.add_debug(format!("Got URL: {}...", &url[..50.min(url.len())]));
                 url
@@ -187,7 +187,7 @@ impl App {
         for (i, track) in tracks_to_add.iter().enumerate() {
             self.add_debug(format!("[{}/{}] {} - {}", i+1, tracks_to_add.len(), track.artist, track.title));
 
-            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+            match self.music_service.get_stream_url(&track.id).await {
                 Ok(url) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("  Failed to add: {}", e));
@@ -234,7 +234,7 @@ impl App {
 
         self.add_debug(format!("Fetching tracks for album: {} - {}", album.artist, album.title));
 
-        let tracks = match self.tidal_client.get_album_tracks(&album.id).await {
+        let tracks = match self.music_service.get_album_tracks(&album.id).await {
             Ok(t) => t,
             Err(e) => {
                 self.add_debug(format!("Failed to get album tracks: {}", e));
@@ -253,7 +253,7 @@ impl App {
         let mut added_count = 0;
 
         for track in &tracks {
-            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+            match self.music_service.get_stream_url(&track.id).await {
                 Ok(url) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add {}: {}", track.title, e));
@@ -287,7 +287,7 @@ impl App {
 
     /// Add album tracks to queue by album ID (used from detail views)
     pub async fn add_album_by_id(&mut self, album_id: &str) -> Result<()> {
-        let tracks = match self.tidal_client.get_album_tracks(album_id).await {
+        let tracks = match self.music_service.get_album_tracks(album_id).await {
             Ok(t) => t,
             Err(e) => {
                 self.add_debug(format!("Failed to get album tracks: {}", e));
@@ -306,7 +306,7 @@ impl App {
         let mut added_count = 0;
 
         for track in &tracks {
-            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+            match self.music_service.get_stream_url(&track.id).await {
                 Ok(url) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add {}: {}", track.title, e));
@@ -352,7 +352,7 @@ impl App {
         let mut added_count = 0;
 
         for track in &tracks {
-            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+            match self.music_service.get_stream_url(&track.id).await {
                 Ok(url) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add {}: {}", track.title, e));
@@ -397,7 +397,7 @@ impl App {
 
         self.add_debug(format!("Fetching top tracks for artist: {}", artist.name));
 
-        let tracks = match self.tidal_client.get_artist_top_tracks(artist.id).await {
+        let tracks = match self.music_service.get_artist_top_tracks(&artist.id).await {
             Ok(t) => t,
             Err(e) => {
                 self.add_debug(format!("Failed to get artist tracks: {}", e));
@@ -416,7 +416,7 @@ impl App {
         let mut added_count = 0;
 
         for track in &tracks {
-            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+            match self.music_service.get_stream_url(&track.id).await {
                 Ok(url) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add {}: {}", track.title, e));

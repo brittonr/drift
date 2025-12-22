@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tidal::{Playlist, TidalClient, Track};
+use crate::service::{Playlist, Track};
 use super::styles::{format_track_with_indicator, is_track_playing};
 use super::theme::Theme;
 
@@ -18,7 +18,7 @@ pub struct BrowseViewState<'a> {
     pub selected_track: usize,
     pub selected_tab: usize,
     pub synced_playlist_ids: HashSet<String>,
-    pub current_track_id: Option<u64>,
+    pub current_track_id: Option<&'a str>,
 }
 
 pub fn render_browse_view(
@@ -40,7 +40,7 @@ pub fn render_browse_view(
         .playlists
         .iter()
         .map(|playlist| {
-            let mut display = TidalClient::format_playlist_display(playlist);
+            let mut display = format!("{} ({} tracks)", playlist.title, playlist.num_tracks);
             if state.synced_playlist_ids.contains(&playlist.id) {
                 display = format!("[S] {}", display);
             }
@@ -80,10 +80,16 @@ pub fn render_browse_view(
         .enumerate()
         .map(|(i, track)| {
             let is_selected = state.selected_tab == 1 && i == state.selected_track;
-            let is_playing = is_track_playing(track.id, state.current_track_id);
+            let is_playing = is_track_playing(&track.id, state.current_track_id);
             let style = theme.track_style(is_selected, is_playing);
 
-            let display = TidalClient::format_track_display(track);
+            let display = format!(
+                "{} - {} ({}:{:02})",
+                track.artist,
+                track.title,
+                track.duration_seconds / 60,
+                track.duration_seconds % 60
+            );
             let display = format_track_with_indicator(display, is_playing);
             ListItem::new(display).style(style)
         })

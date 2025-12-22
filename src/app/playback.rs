@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::App;
 use super::state::{RadioSeed, ViewMode};
-use crate::tidal::Track;
+use crate::service::{CoverArt, Track};
 use crate::ui::{SearchTab, LibraryTab};
 
 impl App {
@@ -10,7 +10,7 @@ impl App {
         self.add_debug(format!("Playing: {} - {}", track.artist, track.title));
 
         self.add_debug(format!("Getting stream URL for track ID {}...", track.id));
-        let stream_url = match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+        let stream_url = match self.music_service.get_stream_url(&track.id).await {
             Ok(url) => {
                 self.add_debug(format!("Got URL: {}...", &url[..50.min(url.len())]));
                 url
@@ -73,7 +73,7 @@ impl App {
                         self.favorite_tracks[self.library.selected_track].clone()
                     }
                     LibraryTab::History if self.library.selected_history < self.history_entries.len() => {
-                        crate::tidal::Track::from(&self.history_entries[self.library.selected_history])
+                        Track::from(&self.history_entries[self.library.selected_history])
                     }
                     _ => return Ok(()),
                 }
@@ -122,9 +122,9 @@ impl App {
                         duration,
                     });
 
-                    if let Some(ref cover_id) = track.album_cover_id {
-                        if !self.album_art_cache.has_cached(cover_id, 320) {
-                            if let Err(e) = self.album_art_cache.get_album_art(cover_id, 320).await {
+                    if let CoverArt::ServiceId { ref id, .. } = track.cover_art {
+                        if !self.album_art_cache.has_cached(id, 320) {
+                            if let Err(e) = self.album_art_cache.get_album_art(id, 320).await {
                                 self.add_debug(format!("Failed to download album art: {}", e));
                             }
                         }
@@ -183,9 +183,9 @@ impl App {
 
         // Fetch radio tracks based on seed type
         let radio_tracks = match radio_seed {
-            RadioSeed::Track(track_id) => {
+            RadioSeed::Track(ref track_id) => {
                 self.add_debug(format!("Radio: fetching similar tracks (seed track: {})", track_id));
-                match self.tidal_client.get_track_radio(track_id, 10).await {
+                match self.music_service.get_track_radio(track_id, 10).await {
                     Ok(tracks) => tracks,
                     Err(e) => {
                         self.add_debug(format!("Radio: failed to fetch tracks: {}", e));
@@ -194,9 +194,9 @@ impl App {
                     }
                 }
             }
-            RadioSeed::Playlist(playlist_id) => {
+            RadioSeed::Playlist(ref playlist_id) => {
                 self.add_debug(format!("Mix: fetching similar tracks (seed playlist: {})", playlist_id));
-                match self.tidal_client.get_playlist_radio(&playlist_id, 10).await {
+                match self.music_service.get_playlist_radio(playlist_id, 10).await {
                     Ok(tracks) => tracks,
                     Err(e) => {
                         self.add_debug(format!("Mix: failed to fetch tracks: {}", e));
@@ -205,9 +205,9 @@ impl App {
                     }
                 }
             }
-            RadioSeed::Artist(artist_id) => {
+            RadioSeed::Artist(ref artist_id) => {
                 self.add_debug(format!("Artist Radio: fetching similar tracks (artist: {})", artist_id));
-                match self.tidal_client.get_artist_radio(artist_id, 10).await {
+                match self.music_service.get_artist_radio(artist_id, 10).await {
                     Ok(tracks) => tracks,
                     Err(e) => {
                         self.add_debug(format!("Artist Radio: failed to fetch tracks: {}", e));
@@ -216,10 +216,10 @@ impl App {
                     }
                 }
             }
-            RadioSeed::Album(album_id) => {
+            RadioSeed::Album(ref album_id) => {
                 self.add_debug(format!("Album Radio: fetching similar tracks (album: {})", album_id));
                 // Album radio fallback: get album tracks, seed from random track
-                let album_tracks = match self.tidal_client.get_album_tracks(&album_id).await {
+                let album_tracks = match self.music_service.get_album_tracks(album_id).await {
                     Ok(tracks) => tracks,
                     Err(e) => {
                         self.add_debug(format!("Album Radio: failed to get album tracks: {}", e));
@@ -235,7 +235,7 @@ impl App {
                 // Pick a random track from the album
                 use rand::Rng;
                 let idx = rand::thread_rng().gen_range(0..album_tracks.len());
-                match self.tidal_client.get_track_radio(album_tracks[idx].id, 10).await {
+                match self.music_service.get_track_radio(&album_tracks[idx].id, 10).await {
                     Ok(tracks) => tracks,
                     Err(e) => {
                         self.add_debug(format!("Album Radio: failed to fetch tracks: {}", e));
@@ -253,10 +253,10 @@ impl App {
         }
 
         // Filter out duplicates (tracks already in local_queue)
-        let existing_ids: std::collections::HashSet<u64> = self.local_queue.iter().map(|t| t.id).collect();
+        let existing_ids: std::collections::HashSet<&str> = self.local_queue.iter().map(|t| t.id.as_str()).collect();
         let new_tracks: Vec<_> = radio_tracks
             .into_iter()
-            .filter(|t| !existing_ids.contains(&t.id))
+            .filter(|t| !existing_ids.contains(t.id.as_str()))
             .collect();
 
         if new_tracks.is_empty() {
@@ -270,7 +270,7 @@ impl App {
         // Add tracks to queue
         let mut added = 0;
         for track in new_tracks {
-            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+            match self.music_service.get_stream_url(&track.id).await {
                 Ok(url) => {
                     if self.mpd_controller.add_track(&url, &mut self.debug_log).await.is_ok() {
                         self.local_queue.push(track);

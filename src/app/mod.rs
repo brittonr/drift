@@ -16,7 +16,8 @@ use crate::download_db::DownloadRecord;
 use crate::history_db::{HistoryDb, HistoryEntry};
 use crate::mpd::{CurrentSong, MpdController, QueueItem};
 use crate::queue_persistence::{self, PersistedQueue};
-use crate::tidal::{Album, Artist, Playlist, SearchResults, TidalClient, Track};
+use crate::service::{MusicService, Album, Artist, Playlist, SearchResults, Track};
+use crate::tidal::TidalClient;
 use crate::downloads::{DownloadEvent, DownloadManager};
 
 pub use state::{
@@ -46,7 +47,8 @@ pub struct App {
     pub local_queue: Vec<Track>,
 
     // Core components
-    pub tidal_client: TidalClient,
+    pub music_service: Box<dyn MusicService>,
+    pub tidal_client: TidalClient,  // Kept temporarily for cover URL generation
     pub mpd_controller: MpdController,
     pub debug_log: VecDeque<String>,
     pub visualizer: Option<CavaVisualizer>,
@@ -116,16 +118,30 @@ impl App {
             }
         };
 
-        // Initialize Tidal client
-        debug_log.push_back("Initializing Tidal client...".to_string());
-        let mut tidal_client = TidalClient::new().await?;
-        tidal_client.set_audio_quality(&config.playback.audio_quality);
+        // Initialize music service
+        debug_log.push_back(format!("Initializing {} service...", config.service.service));
+        let mut music_service: Box<dyn MusicService> = match config.service.service.as_str() {
+            "youtube" | "ytmusic" => {
+                match crate::service::YouTubeClient::new(None).await {
+                    Ok(client) => Box::new(client),
+                    Err(e) => {
+                        debug_log.push_back(format!("YouTube init failed: {}, falling back to Tidal", e));
+                        Box::new(crate::service::TidalClient::new().await?)
+                    }
+                }
+            }
+            _ => Box::new(crate::service::TidalClient::new().await?),
+        };
+        music_service.set_audio_quality(&config.playback.audio_quality);
 
-        if tidal_client.config.is_some() {
-            debug_log.push_back("Tidal credentials loaded".to_string());
+        if music_service.is_authenticated() {
+            debug_log.push_back(format!("{} credentials loaded", config.service.service));
         } else {
-            debug_log.push_back("No Tidal credentials - demo mode".to_string());
+            debug_log.push_back(format!("No {} credentials - demo mode", config.service.service));
         }
+
+        // Keep legacy TidalClient for cover URL generation (temporary)
+        let tidal_client = TidalClient::new().await?;
 
         // Initialize MPD controller with config
         debug_log.push_back("Connecting to MPD...".to_string());
@@ -137,13 +153,13 @@ impl App {
 
         // Load initial playlists
         debug_log.push_back("Fetching playlists...".to_string());
-        let playlists = tidal_client.get_playlists().await?;
+        let playlists = music_service.get_playlists().await?;
         debug_log.push_back(format!("Loaded {} playlists", playlists.len()));
 
         // Load tracks from first playlist if available
         let tracks = if !playlists.is_empty() {
             debug_log.push_back(format!("Loading tracks from '{}'...", playlists[0].title));
-            let tracks = tidal_client.get_tracks(&playlists[0].id).await?;
+            let tracks = music_service.get_playlist_tracks(&playlists[0].id).await?;
             debug_log.push_back(format!("Loaded {} tracks", tracks.len()));
             tracks
         } else {
@@ -248,6 +264,7 @@ impl App {
             current_song: None,
             queue: Vec::new(),
             local_queue,
+            music_service,
             tidal_client,
             mpd_controller,
             debug_log,
@@ -339,7 +356,7 @@ impl App {
             let playlist_id = self.playlists[index].id.clone();
             self.add_debug(format!("Loading playlist: {}", playlist_title));
 
-            self.tracks = self.tidal_client.get_tracks(&playlist_id).await?;
+            self.tracks = self.music_service.get_playlist_tracks(&playlist_id).await?;
             self.browse.selected_track = 0;
 
             self.add_debug(format!("Loaded {} tracks", self.tracks.len()));
@@ -356,7 +373,7 @@ impl App {
         self.add_debug(format!("Searching for: {}", self.search.query));
         self.search.is_active = true;
 
-        match self.tidal_client.search(&self.search.query, 20).await {
+        match self.music_service.search(&self.search.query, 20).await {
             Ok(results) => {
                 let track_count = results.tracks.len();
                 let album_count = results.albums.len();
@@ -381,7 +398,7 @@ impl App {
     pub async fn load_favorites(&mut self) {
         self.add_debug("Loading favorites from Tidal...".to_string());
 
-        match self.tidal_client.get_favorite_tracks().await {
+        match self.music_service.get_favorite_tracks().await {
             Ok(tracks) => {
                 let count = tracks.len();
                 self.favorite_tracks = tracks;
@@ -392,7 +409,7 @@ impl App {
             }
         }
 
-        match self.tidal_client.get_favorite_albums().await {
+        match self.music_service.get_favorite_albums().await {
             Ok(albums) => {
                 let count = albums.len();
                 self.favorite_albums = albums;
@@ -403,7 +420,7 @@ impl App {
             }
         }
 
-        match self.tidal_client.get_favorite_artists().await {
+        match self.music_service.get_favorite_artists().await {
             Ok(artists) => {
                 let count = artists.len();
                 self.favorite_artists = artists;
@@ -448,7 +465,7 @@ impl App {
         let track = self.favorite_tracks[index].clone();
         self.add_debug(format!("Removing from favorites: {}", track.title));
 
-        match self.tidal_client.remove_favorite_track(track.id).await {
+        match self.music_service.remove_favorite_track(&track.id).await {
             Ok(()) => {
                 self.add_debug(format!("Removed '{}' from favorites", track.title));
                 self.favorite_tracks.remove(index);
@@ -465,7 +482,7 @@ impl App {
     pub async fn add_favorite_track(&mut self, track: Track) {
         self.add_debug(format!("Adding to favorites: {}", track.title));
 
-        match self.tidal_client.add_favorite_track(track.id).await {
+        match self.music_service.add_favorite_track(&track.id).await {
             Ok(()) => {
                 self.add_debug(format!("Added '{}' to favorites", track.title));
             }
@@ -526,7 +543,7 @@ impl App {
         self.add_debug(format!("Loading artist: {}", artist.name));
 
         // Fetch top tracks
-        match self.tidal_client.get_artist_top_tracks(artist.id).await {
+        match self.music_service.get_artist_top_tracks(&artist.id).await {
             Ok(tracks) => {
                 self.add_debug(format!("Loaded {} top tracks", tracks.len()));
                 self.artist_detail.top_tracks = tracks;
@@ -537,7 +554,7 @@ impl App {
         }
 
         // Fetch albums
-        match self.tidal_client.get_artist_albums(artist.id).await {
+        match self.music_service.get_artist_albums(&artist.id).await {
             Ok(albums) => {
                 self.add_debug(format!("Loaded {} albums", albums.len()));
                 self.artist_detail.albums = albums;
@@ -556,7 +573,7 @@ impl App {
 
         self.add_debug(format!("Loading album: {} - {}", album.artist, album.title));
 
-        match self.tidal_client.get_album_tracks(&album.id).await {
+        match self.music_service.get_album_tracks(&album.id).await {
             Ok(tracks) => {
                 self.add_debug(format!("Loaded {} tracks", tracks.len()));
                 self.album_detail.tracks = tracks;
@@ -594,7 +611,7 @@ impl App {
     /// Open the "Add to Playlist" dialog for a given track
     pub fn open_add_to_playlist_dialog(&mut self, track: &Track) {
         self.dialog.mode = DialogMode::AddToPlaylist {
-            track_id: track.id,
+            track_id: track.id.clone(),
             track_title: track.title.clone(),
         };
         self.dialog.selected_index = 0;
@@ -642,7 +659,7 @@ impl App {
 
         self.add_debug(format!("Creating playlist: {}", name));
 
-        match self.tidal_client.create_playlist(&name, None).await {
+        match self.music_service.create_playlist(&name, None).await {
             Ok(playlist) => {
                 self.add_debug(format!("Created playlist: {}", playlist.title));
                 self.playlists.insert(0, playlist);
@@ -659,7 +676,7 @@ impl App {
         let (track_id, playlist_id) = match &self.dialog.mode {
             DialogMode::AddToPlaylist { track_id, .. } => {
                 if self.dialog.selected_index < self.playlists.len() {
-                    (*track_id, self.playlists[self.dialog.selected_index].id.clone())
+                    (track_id.clone(), self.playlists[self.dialog.selected_index].id.clone())
                 } else {
                     self.add_debug("No playlist selected".to_string());
                     return;
@@ -671,7 +688,7 @@ impl App {
         let playlist_title = self.playlists[self.dialog.selected_index].title.clone();
         self.add_debug(format!("Adding track to playlist: {}", playlist_title));
 
-        match self.tidal_client.add_tracks_to_playlist(&playlist_id, &[track_id]).await {
+        match self.music_service.add_tracks_to_playlist(&playlist_id, &[track_id]).await {
             Ok(()) => {
                 self.add_debug(format!("Added track to '{}'", playlist_title));
                 // Update track count in local state
@@ -702,7 +719,7 @@ impl App {
 
         self.add_debug(format!("Renaming playlist to: {}", new_title));
 
-        match self.tidal_client.update_playlist(&playlist_id, Some(&new_title), None).await {
+        match self.music_service.update_playlist(&playlist_id, Some(&new_title), None).await {
             Ok(()) => {
                 self.add_debug(format!("Renamed playlist to: {}", new_title));
                 // Update local state
@@ -728,7 +745,7 @@ impl App {
 
         self.add_debug(format!("Deleting playlist: {}", playlist_title));
 
-        match self.tidal_client.delete_playlist(&playlist_id).await {
+        match self.music_service.delete_playlist(&playlist_id).await {
             Ok(()) => {
                 self.add_debug("Playlist deleted".to_string());
                 // Remove from local state
@@ -771,7 +788,7 @@ impl App {
 
         self.add_debug(format!("Removing '{}' from playlist", track_title));
 
-        match self.tidal_client.remove_tracks_from_playlist(&playlist_id, &[track_index]).await {
+        match self.music_service.remove_tracks_from_playlist(&playlist_id, &[track_index]).await {
             Ok(()) => {
                 self.add_debug(format!("Removed '{}' from playlist", track_title));
                 // Remove from local state

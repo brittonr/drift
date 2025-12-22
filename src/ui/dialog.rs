@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::state::DialogMode;
-use crate::tidal::Playlist;
+use crate::service::Playlist;
 use super::theme::Theme;
 
 pub struct DialogRenderState<'a> {

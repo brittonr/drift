@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 use std::time::Instant;
 
-use crate::tidal::{Album, Artist, Track};
+use crate::service::{Album, Artist, Track};
 use crate::ui::{LibraryTab, SearchTab};
 
 /// Status message for display in the status bar
@@ -13,9 +13,9 @@ pub struct StatusMessage {
 
 #[derive(Clone)]
 pub enum RadioSeed {
-    Track(u64),
+    Track(String),
     Playlist(String),
-    Artist(u64),
+    Artist(String),
     Album(String),
 }
 
@@ -164,7 +164,7 @@ pub enum DialogMode {
     CreatePlaylist,
     /// Adding a track to a playlist - selecting which playlist
     AddToPlaylist {
-        track_id: u64,
+        track_id: String,
         track_title: String,
     },
     /// Renaming a playlist - text input for new name

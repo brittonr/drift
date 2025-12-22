@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tidal::{SearchResults, TidalClient};
+use crate::service::SearchResults;
 use super::styles::{format_track_with_indicator, is_track_playing};
 use super::theme::Theme;
 
@@ -24,7 +24,7 @@ pub struct SearchViewState<'a> {
     pub selected_search_album: usize,
     pub selected_search_artist: usize,
     pub is_searching: bool,
-    pub current_track_id: Option<u64>,
+    pub current_track_id: Option<&'a str>,
 }
 
 pub fn render_search_view(
@@ -73,10 +73,16 @@ pub fn render_search_view(
                     .enumerate()
                     .map(|(i, track)| {
                         let is_selected = i == state.selected_search_track;
-                        let is_playing = is_track_playing(track.id, state.current_track_id);
+                        let is_playing = is_track_playing(&track.id, state.current_track_id);
                         let style = theme.track_style(is_selected, is_playing);
 
-                        let display = TidalClient::format_track_display(track);
+                        let display = format!(
+                            "{} - {} ({}:{:02})",
+                            track.artist,
+                            track.title,
+                            track.duration_seconds / 60,
+                            track.duration_seconds % 60
+                        );
                         let display = format_track_with_indicator(display, is_playing);
                         ListItem::new(display).style(style)
                     })

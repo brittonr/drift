@@ -368,7 +368,7 @@ impl TidalClient {
             // Try up to 2 times (initial + 1 retry after refresh)
             for attempt in 0..2 {
                 // Get a fresh config reference each iteration to avoid borrow issues
-                let (token, user_id) = if let Some(ref config) = self.config {
+                let (token, _user_id) = if let Some(ref config) = self.config {
                     (config.access_token.clone(), config.user_id)
                 } else {
                     break;
