@@ -329,6 +329,23 @@ impl MpdController {
         Ok(())
     }
 
+    pub async fn seek_to(&mut self, seconds: u32, debug_log: &mut VecDeque<String>) -> Result<()> {
+        debug_log.push_back(format!("Executing: mpc seek {}", seconds));
+
+        let output = Command::new("mpc")
+            .arg("seek")
+            .arg(seconds.to_string())
+            .output()?;
+
+        if output.status.success() {
+            debug_log.push_back(format!("✓ Seeked to {}s", seconds));
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            debug_log.push_back(format!("✗ Failed to seek: {}", error));
+        }
+        Ok(())
+    }
+
     pub async fn toggle_repeat(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc repeat".to_string());
 
@@ -495,6 +512,38 @@ impl MpdController {
         }
 
         Ok((elapsed, total))
+    }
+
+    /// Get current queue position (0-indexed) and elapsed time
+    /// Returns (position, elapsed_seconds) or None if not playing
+    pub async fn get_playback_position(&mut self) -> Result<Option<(usize, u32)>> {
+        let status_output = Command::new("mpc").arg("status").output()?;
+        let status_str = String::from_utf8_lossy(&status_output.stdout);
+
+        // Format: "[playing] #1/5   0:45/3:20 (22%)"
+        for line in status_str.lines() {
+            if line.contains("[playing]") || line.contains("[paused]") {
+                // Extract position: "#1/5" -> 1 (then convert to 0-indexed)
+                if let Some(pos_part) = line.split('#').nth(1) {
+                    if let Some(pos_str) = pos_part.split('/').next() {
+                        if let Ok(pos) = pos_str.parse::<usize>() {
+                            // Extract elapsed time
+                            let mut elapsed_secs = 0u32;
+                            if let Some(time_part) = line.split_whitespace().nth(2) {
+                                if let Some(elapsed_str) = time_part.split('/').next() {
+                                    let duration = parse_duration(elapsed_str);
+                                    elapsed_secs = duration.as_secs() as u32;
+                                }
+                            }
+                            // Convert to 0-indexed
+                            return Ok(Some((pos.saturating_sub(1), elapsed_secs)));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     // Get detailed current playing info

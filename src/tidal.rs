@@ -34,6 +34,7 @@ pub struct Track {
     pub artist: String,
     pub album: String,
     pub duration_seconds: u32,
+    pub album_cover_id: Option<String>,  // Tidal cover ID (e.g., "abc123-def4-5678")
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +105,7 @@ struct ArtistResponse {
 #[derive(Debug, Deserialize)]
 struct AlbumResponse {
     title: String,
+    cover: Option<String>,  // Album cover ID from Tidal
 }
 
 pub struct TidalClient {
@@ -276,9 +278,9 @@ impl TidalClient {
                                         .map(|a| a.name)
                                         .unwrap_or_else(|| "Unknown Artist".to_string());
 
-                                    let album_title = track.album
-                                        .map(|a| a.title)
-                                        .unwrap_or_else(|| "Unknown Album".to_string());
+                                    let (album_title, album_cover_id) = track.album
+                                        .map(|a| (a.title, a.cover))
+                                        .unwrap_or_else(|| ("Unknown Album".to_string(), None));
 
                                     Track {
                                         id: track.id,
@@ -286,6 +288,7 @@ impl TidalClient {
                                         artist: artist_name,
                                         album: album_title,
                                         duration_seconds: track.duration.unwrap_or(0),
+                                        album_cover_id,
                                     }
                                 })
                             }).collect();
@@ -323,6 +326,7 @@ impl TidalClient {
                 artist: "Queen".to_string(),
                 album: "A Night at the Opera".to_string(),
                 duration_seconds: 354,
+                album_cover_id: None,
             },
             Track {
                 id: 2,
@@ -330,6 +334,7 @@ impl TidalClient {
                 artist: "Led Zeppelin".to_string(),
                 album: "Led Zeppelin IV".to_string(),
                 duration_seconds: 482,
+                album_cover_id: None,
             },
             Track {
                 id: 3,
@@ -337,6 +342,7 @@ impl TidalClient {
                 artist: "Eagles".to_string(),
                 album: "Hotel California".to_string(),
                 duration_seconds: 391,
+                album_cover_id: None,
             },
         ]
     }
@@ -484,6 +490,15 @@ impl TidalClient {
         )
     }
 
+    /// Get album cover URL from Tidal cover ID
+    /// Size can be: 80, 160, 320, 640, 1280
+    pub fn get_album_cover_url(cover_id: &str, size: u32) -> String {
+        let path = cover_id.replace('-', "/");
+        format!("https://resources.tidal.com/images/{}/{}x{}.jpg",
+            path, size, size
+        )
+    }
+
     pub fn format_playlist_display(playlist: &Playlist) -> String {
         format!("{} ({} tracks)", playlist.title, playlist.num_tracks)
     }
@@ -546,6 +561,12 @@ impl TidalClient {
                                     .and_then(|t| t.as_str())
                                     .unwrap_or("Unknown Album")
                                     .to_string();
+
+                                let album_cover_id = item.get("album")
+                                    .and_then(|a| a.get("cover"))
+                                    .and_then(|c| c.as_str())
+                                    .map(|s| s.to_string());
+
                                 let duration = item.get("duration")?.as_u64()? as u32;
 
                                 Some(Track {
@@ -554,6 +575,7 @@ impl TidalClient {
                                     artist,
                                     album,
                                     duration_seconds: duration,
+                                    album_cover_id,
                                 })
                             })
                             .collect()

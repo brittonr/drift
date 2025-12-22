@@ -26,6 +26,13 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.21"
 which = "6"
 
+# Album art display
+image = "0.25"
+ratatui-image = { version = "1.0", features = ["serde"] }
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+# Configuration
+toml = "0.8"

@@ -1,6 +1,8 @@
 mod tidal;
 mod mpd;
 mod cava;
+mod album_art;
+mod queue_persistence;
 
 use anyhow::Result;
 use crossterm::{
@@ -73,10 +75,15 @@ struct App {
     debug_log: VecDeque<String>,
     visualizer: Option<CavaVisualizer>,
     show_visualizer: bool,
+    album_art_cache: album_art::AlbumArtCache,
 
     // Helix-style key command state
     pending_key: Option<char>,  // For multi-key commands like 'g' prefix
     space_pressed: bool,  // For Space-prefixed commands
+
+    // Queue persistence
+    queue_dirty: bool,  // Track if queue needs saving
+    pending_restore: Option<queue_persistence::PersistedQueue>,  // Queue to restore on first tick
 }
 
 impl App {
@@ -135,6 +142,27 @@ impl App {
             }
         };
 
+        // Initialize album art cache
+        let album_art_cache = album_art::AlbumArtCache::new()?;
+        debug_log.push_back("✓ Album art cache initialized".to_string());
+
+        // Load persisted queue
+        let (local_queue, pending_restore) = match queue_persistence::load_queue() {
+            Ok(Some(persisted)) => {
+                debug_log.push_back(format!("Found {} tracks in saved queue", persisted.tracks.len()));
+                let tracks: Vec<Track> = persisted.tracks.iter().map(Track::from).collect();
+                (tracks, Some(persisted))
+            }
+            Ok(None) => {
+                debug_log.push_back("No saved queue found".to_string());
+                (Vec::new(), None)
+            }
+            Err(e) => {
+                debug_log.push_back(format!("Failed to load queue: {}", e));
+                (Vec::new(), None)
+            }
+        };
+
         Ok(Self {
             view_mode: ViewMode::Browse,
             selected_tab: 0,
@@ -153,7 +181,7 @@ impl App {
             current_track: None,
             current_song: None,
             queue: Vec::new(),
-            local_queue: Vec::new(),
+            local_queue,
             selected_queue_item: 0,
             show_queue: false,
             volume: 100,
@@ -165,8 +193,11 @@ impl App {
             debug_log,
             visualizer,
             show_visualizer: true,
+            album_art_cache,
             pending_key: None,
             space_pressed: false,
+            queue_dirty: false,
+            pending_restore,
         })
     }
 
@@ -185,6 +216,94 @@ impl App {
         self.debug_log.push_back(msg);
         while self.debug_log.len() > 100 {
             self.debug_log.pop_front();
+        }
+    }
+
+    async fn save_queue_state(&mut self) {
+        if self.local_queue.is_empty() {
+            // No queue to save, but save empty state to clear any existing file
+            let persisted = queue_persistence::PersistedQueue::new();
+            if let Err(e) = queue_persistence::save_queue(&persisted) {
+                self.add_debug(format!("Failed to save queue: {}", e));
+            }
+            return;
+        }
+
+        // Get current playback position from MPD
+        let (position, elapsed) = match self.mpd_controller.get_playback_position().await {
+            Ok(Some((pos, elapsed))) => (Some(pos), Some(elapsed)),
+            Ok(None) => (None, None),
+            Err(_) => (None, None),
+        };
+
+        let persisted = queue_persistence::PersistedQueue::from_tracks(
+            &self.local_queue,
+            position,
+            elapsed,
+        );
+
+        match queue_persistence::save_queue(&persisted) {
+            Ok(()) => {
+                if let (Some(pos), Some(el)) = (position, elapsed) {
+                    self.add_debug(format!("Saved {} tracks (pos {}, {}s)", self.local_queue.len(), pos + 1, el));
+                } else {
+                    self.add_debug(format!("Saved {} tracks to queue", self.local_queue.len()));
+                }
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to save queue: {}", e));
+            }
+        }
+    }
+
+    async fn restore_queue(&mut self, persisted: queue_persistence::PersistedQueue) {
+        if persisted.tracks.is_empty() {
+            return;
+        }
+
+        self.add_debug(format!("Restoring {} tracks to MPD...", persisted.tracks.len()));
+
+        // Clear existing MPD queue
+        if let Err(e) = self.mpd_controller.clear_queue(&mut self.debug_log).await {
+            self.add_debug(format!("Failed to clear MPD queue: {}", e));
+            return;
+        }
+
+        // Add each track to MPD
+        let mut added = 0;
+        for pt in &persisted.tracks {
+            let track = Track::from(pt);
+            match self.tidal_client.get_stream_url(&track.id.to_string()).await {
+                Ok(url) => {
+                    if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
+                        self.add_debug(format!("Failed to add track {}: {}", track.title, e));
+                    } else {
+                        added += 1;
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
+                }
+            }
+        }
+
+        self.add_debug(format!("Restored {}/{} tracks to MPD", added, persisted.tracks.len()));
+
+        // Resume playback if position was saved
+        if let Some(pos) = persisted.current_position {
+            if pos < added {
+                self.add_debug(format!("Resuming from track {}", pos + 1));
+                if let Err(e) = self.mpd_controller.play_position(pos, &mut self.debug_log).await {
+                    self.add_debug(format!("Failed to resume playback: {}", e));
+                } else if let Some(elapsed) = persisted.elapsed_seconds {
+                    if elapsed > 0 {
+                        self.add_debug(format!("Seeking to {}s", elapsed));
+                        if let Err(e) = self.mpd_controller.seek_to(elapsed, &mut self.debug_log).await {
+                            self.add_debug(format!("Failed to seek: {}", e));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -490,6 +609,15 @@ impl App {
                         elapsed,
                         duration,
                     });
+
+                    // Download album art if available and not cached (async, will be fast once cached)
+                    if let Some(ref cover_id) = track.album_cover_id {
+                        if !self.album_art_cache.has_cached(cover_id, 320) {
+                            if let Err(e) = self.album_art_cache.get_album_art(cover_id, 320).await {
+                                self.add_debug(format!("Failed to download album art: {}", e));
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     self.add_debug(format!("Failed to get timing info: {}", e));
@@ -667,11 +795,21 @@ async fn run_app<B: ratatui::backend::Backend>(
 ) -> Result<()> {
     let mut last_status_check = std::time::Instant::now();
 
+    // Restore saved queue on first tick
+    if let Some(persisted) = app.pending_restore.take() {
+        app.restore_queue(persisted).await;
+    }
+
     loop {
         // Check MPD status periodically (before drawing)
         if last_status_check.elapsed() > Duration::from_secs(1) {
             if let Err(e) = app.check_mpd_status().await {
                 app.add_debug(format!("MPD status check error: {}", e));
+            }
+            // Save queue if dirty (debounced with status check)
+            if app.queue_dirty {
+                app.save_queue_state().await;
+                app.queue_dirty = false;
             }
             last_status_check = std::time::Instant::now();
         }
@@ -710,6 +848,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                     match key.code {
                         KeyCode::Char('q') => {
                             app.space_pressed = false;
+                            // Save queue before exiting
+                            if app.queue_dirty {
+                                app.save_queue_state().await;
+                            }
                             return Ok(());
                         }
                         KeyCode::Char('p') => {
@@ -828,6 +970,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Char('y') => {
                         if let Err(e) = app.add_selected_track_to_queue().await {
                             app.add_debug(format!("✗ Failed to add track: {}", e));
+                        } else {
+                            app.queue_dirty = true;
                         }
                     }
 
@@ -835,6 +979,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Char('Y') => {
                         if let Err(e) = app.add_all_tracks_to_queue().await {
                             app.add_debug(format!("✗ Failed to add tracks: {}", e));
+                        } else {
+                            app.queue_dirty = true;
                         }
                     }
 
@@ -869,6 +1015,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                         app.selected_queue_item -= 1;
                                     }
                                     app.add_debug(format!("✓ Removed track from queue, {} remaining", app.local_queue.len()));
+                                    app.queue_dirty = true;
                                 }
                             }
                         }
@@ -882,6 +1029,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.queue.clear();
                             app.local_queue.clear();
                             app.add_debug("✓ Queue cleared".to_string());
+                            app.queue_dirty = true;
                         }
                     }
 
@@ -980,7 +1128,7 @@ async fn run_app<B: ratatui::backend::Backend>(
     }
 }
 
-fn ui(f: &mut Frame, app: &App) {
+fn ui(f: &mut Frame, app: &mut App) {
     // Main layout - adjust based on what's visible
     let mut constraints = vec![
         Constraint::Length(3),     // Header
@@ -1198,7 +1346,68 @@ fn render_visualizer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     }
 }
 
-fn render_now_playing(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_now_playing(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    // Always split the area to reserve space for album art
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(20),  // Album art width
+            Constraint::Min(40),     // Track info
+        ])
+        .split(area);
+
+    let art_area = chunks[0];
+    let info_area = chunks[1];
+
+    // Render album art or placeholder
+    let has_album_art = if let Some(ref track) = app.current_track {
+        if let Some(ref cover_id) = track.album_cover_id {
+            // Check if image is cached and render it
+            if app.album_art_cache.has_cached(cover_id, 320) {
+                // Try to set the current image for display
+                let _ = app.album_art_cache.set_current_image(cover_id, 320);
+
+                // Render the image if protocol is available
+                if let Some(protocol) = app.album_art_cache.get_protocol_mut() {
+                    use ratatui_image::StatefulImage;
+                    let image_widget = StatefulImage::new(None);
+                    f.render_stateful_widget(image_widget, art_area, protocol);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // If no album art, show music symbol placeholder
+    if !has_album_art {
+        let placeholder_lines = vec![
+            Line::from(""),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("       ♪", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("      ♫ ♪", Style::default().fg(Color::DarkGray)),
+            ]),
+            Line::from(vec![
+                Span::styled("       ♪", Style::default().fg(Color::DarkGray)),
+            ]),
+        ];
+
+        let placeholder = Paragraph::new(placeholder_lines)
+            .alignment(Alignment::Center);
+
+        f.render_widget(placeholder, art_area);
+    }
+
     let mut lines = vec![];
 
     if let Some(ref song) = app.current_song {
@@ -1332,7 +1541,7 @@ fn render_now_playing(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
                 .border_style(border_style),
         );
 
-    f.render_widget(now_playing, area);
+    f.render_widget(now_playing, info_area);
 }
 
 fn render_queue(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
