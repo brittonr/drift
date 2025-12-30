@@ -104,6 +104,9 @@ async fn run_app<B: ratatui::backend::Backend>(
                 app.load_favorites().await;
             }
 
+            // Check for config file changes
+            app.check_config_reload();
+
             last_status_check = std::time::Instant::now();
         }
 

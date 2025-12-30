@@ -91,6 +91,7 @@ pub struct App {
 
     // Configuration
     pub config: Config,
+    pub config_mtime: Option<std::time::SystemTime>,
 
     // Help panel
     pub show_help: bool,
@@ -321,6 +322,7 @@ impl App {
             history_db,
             history_entries,
             config,
+            config_mtime: Config::get_mtime(),
             show_help: false,
             help: HelpState::default(),
             show_debug: false,
@@ -370,6 +372,34 @@ impl App {
                 self.status_message = None;
             }
         }
+    }
+
+    pub fn check_config_reload(&mut self) {
+        let current_mtime = Config::get_mtime();
+        if current_mtime != self.config_mtime {
+            match Config::load() {
+                Ok(new_config) => {
+                    self.apply_config_changes(new_config);
+                    self.config_mtime = current_mtime;
+                }
+                Err(e) => {
+                    self.add_debug(format!("Config reload failed: {}", e));
+                }
+            }
+        }
+    }
+
+    fn apply_config_changes(&mut self, new_config: Config) {
+        // UI settings that can be hot-reloaded
+        self.show_visualizer = new_config.ui.show_visualizer;
+
+        // Theme and search settings are applied automatically
+        // since they're read from self.config on each use
+
+        self.add_debug("Config reloaded".to_string());
+        self.set_status_info("Config reloaded".to_string());
+
+        self.config = new_config;
     }
 
     pub fn update_clickable_areas(
