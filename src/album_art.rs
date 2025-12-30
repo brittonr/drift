@@ -5,6 +5,13 @@ use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
+/// Get album cover URL from Tidal cover ID
+/// Size can be: 80, 160, 320, 640, 1280
+fn get_tidal_cover_url(cover_id: &str, size: u32) -> String {
+    let path = cover_id.replace('-', "/");
+    format!("https://resources.tidal.com/images/{}/{}x{}.jpg", path, size, size)
+}
+
 /// Handles downloading and caching album art
 pub struct AlbumArtCache {
     cache_dir: PathBuf,
@@ -74,7 +81,7 @@ impl AlbumArtCache {
                 .context("Failed to load cached album art")?
         } else {
             // Download from Tidal
-            let url = crate::tidal::TidalClient::get_album_cover_url(cover_id, size);
+            let url = get_tidal_cover_url(cover_id, size);
             let response = reqwest::get(&url)
                 .await
                 .context("Failed to download album art")?;
@@ -257,20 +264,4 @@ impl AlbumArtCache {
             crate::service::CoverArt::None => Ok(false),
         }
     }
-
-    /// Get the cover art identifier for async loading
-    pub fn get_cover_source(cover: &crate::service::CoverArt) -> Option<CoverSource> {
-        match cover {
-            crate::service::CoverArt::ServiceId { id, .. } => Some(CoverSource::TidalId(id.clone())),
-            crate::service::CoverArt::Url(url) => Some(CoverSource::Url(url.clone())),
-            crate::service::CoverArt::None => None,
-        }
-    }
-}
-
-/// Cover art source for async loading
-#[derive(Debug, Clone)]
-pub enum CoverSource {
-    TidalId(String),
-    Url(String),
 }

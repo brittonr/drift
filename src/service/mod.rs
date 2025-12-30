@@ -62,16 +62,6 @@ impl CoverArt {
         }
     }
 
-    /// Create a YouTube cover art reference (direct URL)
-    pub fn youtube(url: String) -> Self {
-        CoverArt::Url(url)
-    }
-
-    /// Create a Bandcamp cover art reference (direct URL)
-    pub fn bandcamp(url: String) -> Self {
-        CoverArt::Url(url)
-    }
-
     /// Create from an optional Tidal cover ID (for backward compatibility)
     pub fn from_tidal_option(cover_id: Option<String>) -> Self {
         match cover_id {

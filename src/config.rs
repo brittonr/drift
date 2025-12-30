@@ -296,12 +296,6 @@ impl Config {
         Ok(())
     }
 
-    /// Generate example config content for documentation
-    pub fn example_config() -> String {
-        let config = Config::default();
-        toml::to_string_pretty(&config).unwrap_or_default()
-    }
-
     /// Get the modification time of the config file
     pub fn get_mtime() -> Option<std::time::SystemTime> {
         Self::config_path()

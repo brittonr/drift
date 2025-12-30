@@ -1,4 +1,3 @@
-mod tidal;
 mod mpd;
 mod cava;
 mod album_art;

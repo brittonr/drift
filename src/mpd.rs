@@ -39,10 +39,6 @@ pub struct MpdController {
 }
 
 impl MpdController {
-    pub async fn new(debug_log: &mut VecDeque<String>) -> Result<Self> {
-        Self::with_config("localhost", 6600, debug_log).await
-    }
-
     pub async fn with_config(host: &str, port: u16, debug_log: &mut VecDeque<String>) -> Result<Self> {
         // Check if MPD is running
         let output = Command::new("mpc")
