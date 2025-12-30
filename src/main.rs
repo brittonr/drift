@@ -9,6 +9,7 @@ mod downloads;
 mod config;
 mod service;
 mod search;
+mod search_cache;
 mod app;
 mod ui;
 mod handlers;

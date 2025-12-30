@@ -56,6 +56,10 @@ pub struct SearchConfig {
     pub live_preview: bool,
     /// Minimum characters before triggering live search
     pub min_chars: usize,
+    /// Enable search result caching
+    pub cache_enabled: bool,
+    /// Cache TTL in seconds (default: 3600 = 1 hour)
+    pub cache_ttl_seconds: u64,
 }
 
 impl Default for SearchConfig {
@@ -68,6 +72,8 @@ impl Default for SearchConfig {
             history_size: 50,
             live_preview: true,
             min_chars: 2,
+            cache_enabled: true,
+            cache_ttl_seconds: 3600,
         }
     }
 }

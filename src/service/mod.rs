@@ -43,7 +43,7 @@ impl std::str::FromStr for ServiceType {
 }
 
 /// Cover art representation - service-agnostic
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CoverArt {
     /// Service-specific ID that needs URL construction (e.g., Tidal cover IDs)
     ServiceId { id: String, service: ServiceType },
@@ -82,7 +82,7 @@ impl CoverArt {
 }
 
 /// A track from any music service
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     /// Unique identifier (string to support both numeric Tidal IDs and YouTube video IDs)
     pub id: String,
@@ -105,7 +105,7 @@ pub struct Playlist {
 }
 
 /// An album from any music service
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Album {
     pub id: String,
     pub title: String,
@@ -116,7 +116,7 @@ pub struct Album {
 }
 
 /// An artist from any music service
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artist {
     pub id: String,
     pub name: String,
@@ -124,7 +124,7 @@ pub struct Artist {
 }
 
 /// Search results from any music service
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResults {
     pub tracks: Vec<Track>,
     pub albums: Vec<Album>,

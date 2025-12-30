@@ -17,6 +17,7 @@ use crate::history_db::{HistoryDb, HistoryEntry};
 use crate::mpd::{CurrentSong, MpdController, QueueItem};
 use crate::queue_persistence::{self, PersistedQueue};
 use crate::search::{ResultScorer, SearchHistory};
+use crate::search_cache::SearchCache;
 use crate::service::{Album, Artist, CoverArt, MixedPlaylistStorage, MultiServiceManager, MusicService, Playlist, SearchResults, Track};
 use crate::downloads::{DownloadEvent, DownloadManager};
 use crate::video::MpvController;
@@ -40,6 +41,7 @@ pub struct App {
     pub search: SearchState,
     pub search_results: Option<SearchResults>,
     pub search_history: SearchHistory,
+    pub search_cache: SearchCache,
 
     // Playback state
     pub playback: PlaybackState,
@@ -270,6 +272,14 @@ impl App {
             debug_log.push_back(format!("Loaded {} search history entries", search_history.entries.len()));
         }
 
+        // Initialize search cache
+        let search_cache = SearchCache::new(config.search.cache_ttl_seconds)?;
+        if config.search.cache_enabled {
+            debug_log.push_back(format!("Search cache initialized (TTL: {}s)", config.search.cache_ttl_seconds));
+        } else {
+            debug_log.push_back("Search cache disabled in config".to_string());
+        }
+
         Ok(Self {
             view_mode: ViewMode::Browse,
             playlists,
@@ -278,6 +288,7 @@ impl App {
             search: SearchState::new(),
             search_results: None,
             search_history,
+            search_cache,
             playback: PlaybackState {
                 volume: default_volume,
                 ..Default::default()
@@ -397,10 +408,40 @@ impl App {
         let query = self.search.query.clone();
         let max_results = self.config.search.max_results;
         let page = self.search.page;
+        let service_filter = self.search.service_filter;
 
         self.add_debug(format!("Searching for: {} (page {}, limit {})", query, page + 1, max_results));
         self.search.is_active = true;
 
+        // Check cache first
+        if self.config.search.cache_enabled {
+            if let Some(cached_results) = self.search_cache.get(&query, service_filter) {
+                let track_count = cached_results.tracks.len();
+                let album_count = cached_results.albums.len();
+                let artist_count = cached_results.artists.len();
+                let total_count = track_count + album_count + artist_count;
+
+                self.add_debug(format!("Cache hit: {} tracks, {} albums, {} artists",
+                    track_count, album_count, artist_count));
+
+                self.search.has_more = track_count >= max_results
+                    || album_count >= max_results
+                    || artist_count >= max_results;
+
+                self.search_results = Some(cached_results);
+                self.search.selected_track = 0;
+                self.search.selected_album = 0;
+                self.search.selected_artist = 0;
+
+                self.search_history.add(&query, total_count);
+                let _ = self.search_history.save();
+
+                self.search.is_active = false;
+                return Ok(());
+            }
+        }
+
+        // Cache miss - call API
         match self.music_service.search(&query, max_results).await {
             Ok(mut results) => {
                 let track_count = results.tracks.len();
@@ -413,6 +454,11 @@ impl App {
 
                 self.add_debug(format!("Found {} tracks, {} albums, {} artists (scored & sorted)",
                     track_count, album_count, artist_count));
+
+                // Cache the results
+                if self.config.search.cache_enabled {
+                    self.search_cache.insert(&query, service_filter, results.clone());
+                }
 
                 // Check if more results might be available (heuristic)
                 self.search.has_more = track_count >= max_results
