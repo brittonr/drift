@@ -148,6 +148,20 @@ impl App {
         }
     }
 
+    pub fn toggle_download_pause(&mut self) {
+        if let Some(ref mut dm) = self.download_manager {
+            if dm.is_paused() {
+                dm.resume();
+                self.add_debug("Downloads resumed".to_string());
+                self.set_status_info("Downloads resumed".to_string());
+            } else {
+                dm.pause();
+                self.add_debug("Downloads paused".to_string());
+                self.set_status_info("Downloads paused".to_string());
+            }
+        }
+    }
+
     pub fn sync_selected_playlist(&mut self) {
         if self.view_mode != ViewMode::Browse || self.browse.selected_tab != 0 {
             self.add_debug("Select a playlist to sync (browse mode, playlists tab)".to_string());

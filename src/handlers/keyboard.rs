@@ -367,11 +367,13 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             handle_play(app).await;
         }
 
-        // P: toggle preview panel in search view
+        // P: toggle preview panel in search view, toggle download pause in downloads view
         KeyCode::Char('P') => {
             if app.view_mode == ViewMode::Search {
                 app.search.show_preview = !app.search.show_preview;
                 app.add_debug(format!("Preview panel {}", if app.search.show_preview { "ON" } else { "OFF" }));
+            } else if app.view_mode == ViewMode::Downloads {
+                app.toggle_download_pause();
             }
         }
 

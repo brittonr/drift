@@ -18,16 +18,33 @@ impl App {
             return self.play_track_video(track).await;
         }
 
-        // Standard audio playback via MPD
-        self.add_debug(format!("Getting stream URL for track ID {} ({})...", track.id, track.service));
-        let stream_url = match self.music_service.get_stream_url_for_track(&track).await {
-            Ok(url) => {
-                self.add_debug(format!("Got URL: {}...", &url[..50.min(url.len())]));
-                url
+        // Check for offline mode - use local file if downloaded
+        let play_url = if self.downloads.offline_mode {
+            if let Some(ref dm) = self.download_manager {
+                if let Some(local_path) = dm.get_local_path(&track.id) {
+                    self.add_debug(format!("Offline mode: using local file {}", local_path));
+                    local_path
+                } else {
+                    self.add_debug("Offline mode: track not downloaded".to_string());
+                    self.set_status_error("Track not downloaded - disable offline mode or download first".to_string());
+                    return Ok(());
+                }
+            } else {
+                self.set_status_error("Download manager not available".to_string());
+                return Ok(());
             }
-            Err(e) => {
-                self.add_debug(format!("Failed to get URL: {}", e));
-                return Err(e);
+        } else {
+            // Standard streaming - get URL from service
+            self.add_debug(format!("Getting stream URL for track ID {} ({})...", track.id, track.service));
+            match self.music_service.get_stream_url_for_track(&track).await {
+                Ok(url) => {
+                    self.add_debug(format!("Got URL: {}...", &url[..50.min(url.len())]));
+                    url
+                }
+                Err(e) => {
+                    self.add_debug(format!("Failed to get URL: {}", e));
+                    return Err(e);
+                }
             }
         };
 
@@ -46,7 +63,7 @@ impl App {
         self.local_queue.clear();
 
         self.add_debug("Adding track to MPD...".to_string());
-        if let Err(e) = self.mpd_controller.add_track(&stream_url, &mut self.debug_log).await {
+        if let Err(e) = self.mpd_controller.add_track(&play_url, &mut self.debug_log).await {
             self.add_debug(format!("Add failed: {}", e));
             return Err(e);
         }

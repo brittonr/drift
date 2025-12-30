@@ -13,6 +13,7 @@ pub struct DownloadsViewState<'a> {
     pub download_records: &'a [DownloadRecord],
     pub selected_download: usize,
     pub offline_mode: bool,
+    pub is_paused: bool,
     pub pending_count: usize,
     pub completed_count: usize,
     pub failed_count: usize,
@@ -30,8 +31,9 @@ pub fn render_downloads_view(
             .alignment(Alignment::Center)
             .block(
                 Block::default()
-                    .title(format!("Downloads [o: offline {}]",
-                        if state.offline_mode { "ON" } else { "OFF" }))
+                    .title(format!("Downloads [o: offline {} | P: {}]",
+                        if state.offline_mode { "ON" } else { "OFF" },
+                        if state.is_paused { "PAUSED" } else { "pause" }))
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(theme.secondary())),
@@ -92,9 +94,10 @@ pub fn render_downloads_view(
         .collect();
 
     let title = format!(
-        "Downloads [{}p {}ok {}fail] [o: offline {} | x: delete | R: retry | b: back]",
+        "Downloads [{}p {}ok {}fail] [o: offline {} | P: {} | x: delete | R: retry | b: back]",
         state.pending_count, state.completed_count, state.failed_count,
-        if state.offline_mode { "ON" } else { "OFF" }
+        if state.offline_mode { "ON" } else { "OFF" },
+        if state.is_paused { "PAUSED" } else { "pause" }
     );
 
     let downloads_list = List::new(items)

@@ -378,10 +378,16 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 .and_then(|dm| dm.get_download_counts().ok())
                 .unwrap_or((0, 0, 0));
 
+            let is_paused = app.download_manager
+                .as_ref()
+                .map(|dm| dm.is_paused())
+                .unwrap_or(false);
+
             let downloads_state = ui::downloads::DownloadsViewState {
                 download_records: &app.download_records,
                 selected_download: app.downloads.selected,
                 offline_mode: app.downloads.offline_mode,
+                is_paused,
                 pending_count: pending,
                 completed_count: completed,
                 failed_count: failed,
