@@ -113,7 +113,7 @@ pub struct App {
 impl App {
     pub async fn new() -> Result<Self> {
         let mut debug_log = VecDeque::new();
-        debug_log.push_back("Starting Tidal TUI...".to_string());
+        debug_log.push_back("Starting Drift...".to_string());
 
         // Load configuration
         let config = match Config::load() {

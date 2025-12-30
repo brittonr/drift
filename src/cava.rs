@@ -34,7 +34,7 @@ impl CavaVisualizer {
 
         // Create default config if it doesn't exist
         if !config_path.exists() {
-            let default_config = r#"# Cava config for Tidal TUI with MPD
+            let default_config = r#"# Cava config for Drift with MPD
 
 [general]
 bars = 20

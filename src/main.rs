@@ -78,7 +78,10 @@ async fn main() -> Result<()> {
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-) -> Result<()> {
+) -> Result<()>
+where
+    <B as ratatui::backend::Backend>::Error: Send + Sync + 'static,
+{
     let mut last_status_check = std::time::Instant::now();
 
     // Restore saved queue on first tick
@@ -173,9 +176,9 @@ fn render_ui(f: &mut Frame, app: &mut App) {
     let header_text = format!(
         "{} - {} Mode",
         if app.music_service.is_authenticated() {
-            "Tidal TUI - Connected"
+            "Drift - Connected"
         } else {
-            "Tidal TUI - Demo Mode"
+            "Drift - Demo Mode"
         },
         match app.view_mode {
             ViewMode::Browse => "Browse",

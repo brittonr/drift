@@ -17,7 +17,7 @@ id3 = "1.16"
 metaflac = "0.2"
 
 # TUI framework
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.28"
 
 # MPD control (uses mpc CLI, not mpd_client)
