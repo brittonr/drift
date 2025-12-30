@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::history_db::HistoryEntry;
-use crate::service::{Album, Artist, Track};
+use crate::service::{Album, Artist, ServiceType, Track};
 use super::styles::{format_track_with_indicator, is_track_playing, service_badge};
 use super::theme::Theme;
 
@@ -31,6 +31,16 @@ pub struct LibraryViewState<'a> {
     pub selected_favorite_artist: usize,
     pub selected_history_entry: usize,
     pub current_track_id: Option<&'a str>,
+    pub service_filter: Option<ServiceType>,
+}
+
+fn filter_indicator(filter: Option<ServiceType>) -> String {
+    match filter {
+        Some(ServiceType::Tidal) => " [Tidal]".to_string(),
+        Some(ServiceType::YouTube) => " [YouTube]".to_string(),
+        Some(ServiceType::Bandcamp) => " [Bandcamp]".to_string(),
+        None => String::new(),
+    }
 }
 
 fn format_time_ago(played_at: DateTime<Utc>) -> String {
@@ -100,10 +110,11 @@ pub fn render_library_view(
         ),
     ];
 
+    let filter_str = filter_indicator(state.service_filter);
     let tab_line = Paragraph::new(Line::from(tabs))
         .block(
             Block::default()
-                .title("Library [Tab: switch | r: refresh | f: unfavorite | b: back]")
+                .title(format!("Library{} [Tab: switch | 1/2/3: filter | 0: all | r: refresh]", filter_str))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.primary())),
         )
@@ -115,8 +126,13 @@ pub fn render_library_view(
     // Content based on selected tab
     match state.library_tab {
         LibraryTab::Tracks => {
-            let items: Vec<ListItem> = state
+            let filtered_tracks: Vec<_> = state
                 .favorite_tracks
+                .iter()
+                .filter(|t| state.service_filter.map_or(true, |s| t.service == s))
+                .collect();
+
+            let items: Vec<ListItem> = filtered_tracks
                 .iter()
                 .enumerate()
                 .map(|(i, track)| {
@@ -137,7 +153,7 @@ pub fn render_library_view(
                 })
                 .collect();
 
-            let count = state.favorite_tracks.len();
+            let count = filtered_tracks.len();
             let list = List::new(items)
                 .block(
                     Block::default()
@@ -154,8 +170,13 @@ pub fn render_library_view(
             );
         }
         LibraryTab::Albums => {
-            let items: Vec<ListItem> = state
+            let filtered_albums: Vec<_> = state
                 .favorite_albums
+                .iter()
+                .filter(|a| state.service_filter.map_or(true, |s| a.service == s))
+                .collect();
+
+            let items: Vec<ListItem> = filtered_albums
                 .iter()
                 .map(|album| {
                     let display = format!("{} {} - {} ({} tracks)", service_badge(album.service), album.artist, album.title, album.num_tracks);
@@ -163,7 +184,7 @@ pub fn render_library_view(
                 })
                 .collect();
 
-            let count = state.favorite_albums.len();
+            let count = filtered_albums.len();
             let list = List::new(items)
                 .block(
                     Block::default()
@@ -180,15 +201,20 @@ pub fn render_library_view(
             );
         }
         LibraryTab::Artists => {
-            let items: Vec<ListItem> = state
+            let filtered_artists: Vec<_> = state
                 .favorite_artists
+                .iter()
+                .filter(|a| state.service_filter.map_or(true, |s| a.service == s))
+                .collect();
+
+            let items: Vec<ListItem> = filtered_artists
                 .iter()
                 .map(|artist| {
                     ListItem::new(format!("{} {}", service_badge(artist.service), artist.name))
                 })
                 .collect();
 
-            let count = state.favorite_artists.len();
+            let count = filtered_artists.len();
             let list = List::new(items)
                 .block(
                     Block::default()

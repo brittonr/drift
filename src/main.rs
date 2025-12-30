@@ -402,6 +402,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 selected_favorite_artist: app.library.selected_artist,
                 selected_history_entry: app.library.selected_history,
                 current_track_id,
+                service_filter: app.library.service_filter,
             };
             app.clickable_areas.left_list = None;
             let right = render_library_view(f, &library_state, area, theme);

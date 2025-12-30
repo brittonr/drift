@@ -503,6 +503,16 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 app.search.selected_album = 0;
                 app.search.selected_artist = 0;
                 app.add_debug(format!("Service filter: {:?}", app.search.service_filter));
+            } else if app.view_mode == ViewMode::Library {
+                app.library.service_filter = if app.library.service_filter == Some(ServiceType::Tidal) {
+                    None
+                } else {
+                    Some(ServiceType::Tidal)
+                };
+                app.library.selected_track = 0;
+                app.library.selected_album = 0;
+                app.library.selected_artist = 0;
+                app.add_debug(format!("Library filter: {:?}", app.library.service_filter));
             } else {
                 if let Err(e) = app.mpd_controller.toggle_single(&mut app.debug_log).await {
                     app.set_status_error(format!("Single toggle error: {}", e));
@@ -522,6 +532,16 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 app.search.selected_album = 0;
                 app.search.selected_artist = 0;
                 app.add_debug(format!("Service filter: {:?}", app.search.service_filter));
+            } else if app.view_mode == ViewMode::Library {
+                app.library.service_filter = if app.library.service_filter == Some(ServiceType::YouTube) {
+                    None
+                } else {
+                    Some(ServiceType::YouTube)
+                };
+                app.library.selected_track = 0;
+                app.library.selected_album = 0;
+                app.library.selected_artist = 0;
+                app.add_debug(format!("Library filter: {:?}", app.library.service_filter));
             }
         }
 
@@ -537,6 +557,16 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 app.search.selected_album = 0;
                 app.search.selected_artist = 0;
                 app.add_debug(format!("Service filter: {:?}", app.search.service_filter));
+            } else if app.view_mode == ViewMode::Library {
+                app.library.service_filter = if app.library.service_filter == Some(ServiceType::Bandcamp) {
+                    None
+                } else {
+                    Some(ServiceType::Bandcamp)
+                };
+                app.library.selected_track = 0;
+                app.library.selected_album = 0;
+                app.library.selected_artist = 0;
+                app.add_debug(format!("Library filter: {:?}", app.library.service_filter));
             }
         }
 
@@ -545,6 +575,9 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 // Clear service filter (show all)
                 app.search.service_filter = None;
                 app.add_debug("Service filter: All".to_string());
+            } else if app.view_mode == ViewMode::Library {
+                app.library.service_filter = None;
+                app.add_debug("Library filter: All".to_string());
             }
         }
 

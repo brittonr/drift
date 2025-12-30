@@ -96,6 +96,7 @@ pub struct LibraryState {
     pub selected_artist: usize,
     pub selected_history: usize,
     pub loaded: bool,
+    pub service_filter: Option<crate::service::ServiceType>,
 }
 
 impl Default for LibraryTab {
