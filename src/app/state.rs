@@ -123,6 +123,8 @@ pub struct PlaybackState {
     pub queue_dirty: bool,
     pub radio_seed: Option<RadioSeed>,
     pub radio_fetching: bool,
+    /// Video mode enabled (YouTube content plays in mpv window)
+    pub video_mode: bool,
 }
 
 impl PlaybackState {
@@ -144,6 +146,7 @@ impl Default for PlaybackState {
             queue_dirty: false,
             radio_seed: None,
             radio_fetching: false,
+            video_mode: false,
         }
     }
 }

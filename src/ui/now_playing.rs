@@ -8,6 +8,7 @@ use ratatui::{
 
 use crate::album_art::AlbumArtCache;
 use crate::app::state::RadioSeed;
+use crate::cava::CavaVisualizer;
 use crate::mpd::CurrentSong;
 use crate::service::{CoverArt, Track};
 
@@ -25,6 +26,8 @@ pub struct NowPlayingState<'a> {
     pub radio_seed: Option<RadioSeed>,
     pub local_queue_len: usize,
     pub album_art_cache: &'a mut AlbumArtCache,
+    pub visualizer: Option<&'a CavaVisualizer>,
+    pub video_mode: bool,
 }
 
 pub fn render_now_playing(
@@ -33,13 +36,27 @@ pub fn render_now_playing(
     area: Rect,
     theme: &Theme,
 ) -> Option<Rect> {
+    // Split vertically if visualizer is present
+    let (player_area, visualizer_area) = if state.visualizer.is_some() {
+        let vsplit = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(7),      // Player info
+                Constraint::Length(5),   // Visualizer
+            ])
+            .split(area);
+        (vsplit[0], Some(vsplit[1]))
+    } else {
+        (area, None)
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(20),
             Constraint::Min(40),
         ])
-        .split(area);
+        .split(player_area);
 
     let art_area = chunks[0];
     let info_area = chunks[1];
@@ -166,6 +183,9 @@ pub fn render_now_playing(
         };
 
         let mut modes = Vec::new();
+        if state.video_mode {
+            modes.push("VIDEO");
+        }
         if state.repeat_mode {
             modes.push("repeat");
         }
@@ -236,6 +256,39 @@ pub fn render_now_playing(
         );
 
     f.render_widget(now_playing, info_area);
+
+    // Render visualizer if present
+    if let (Some(viz), Some(viz_area)) = (state.visualizer, visualizer_area) {
+        let bars = viz.draw_bars();
+
+        let viz_lines = vec![
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(bars, Style::default().fg(theme.primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  Bass ", Style::default().fg(theme.text_disabled())),
+                Span::raw("                    "),
+                Span::styled("Treble", Style::default().fg(theme.text_disabled())),
+            ]),
+        ];
+
+        let visualizer_widget = Paragraph::new(viz_lines)
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .title("Visualizer [Space+v: toggle]")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(if state.is_playing {
+                        theme.success()
+                    } else {
+                        theme.text_disabled()
+                    })),
+            );
+
+        f.render_widget(visualizer_widget, viz_area);
+    }
 
     progress_bar_area
 }

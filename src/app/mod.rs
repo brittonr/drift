@@ -19,6 +19,7 @@ use crate::queue_persistence::{self, PersistedQueue};
 use crate::search::{ResultScorer, SearchHistory};
 use crate::service::{Album, Artist, CoverArt, MixedPlaylistStorage, MultiServiceManager, MusicService, Playlist, SearchResults, Track};
 use crate::downloads::{DownloadEvent, DownloadManager};
+use crate::video::MpvController;
 
 pub use state::{
     AlbumDetailState, ArtistDetailState, BrowseState, ClickableAreas, DialogMode, DialogState,
@@ -93,11 +94,17 @@ pub struct App {
     pub show_help: bool,
     pub help: HelpState,
 
+    // Debug log visibility (hidden by default)
+    pub show_debug: bool,
+
     // Playlist dialogs
     pub dialog: DialogState,
 
     // Status bar message (for displaying errors/info)
     pub status_message: Option<StatusMessage>,
+
+    // Video playback controller (for YouTube video mode)
+    pub video_controller: Option<MpvController>,
 }
 
 impl App {
@@ -245,6 +252,15 @@ impl App {
             }
         };
 
+        // Initialize video controller if mpv is available
+        let video_controller = if MpvController::is_available() {
+            debug_log.push_back("mpv found - video mode available (press 'V' to toggle)".to_string());
+            Some(MpvController::new(&config.video))
+        } else {
+            debug_log.push_back("mpv not found - video mode disabled".to_string());
+            None
+        };
+
         let default_volume = config.playback.default_volume;
         let show_visualizer = config.ui.show_visualizer;
 
@@ -296,8 +312,10 @@ impl App {
             config,
             show_help: false,
             help: HelpState::default(),
+            show_debug: false,
             dialog: DialogState::default(),
             status_message: None,
+            video_controller,
         })
     }
 

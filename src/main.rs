@@ -12,6 +12,7 @@ mod search;
 mod app;
 mod ui;
 mod handlers;
+mod video;
 
 use anyhow::Result;
 use crossterm::{
@@ -32,10 +33,10 @@ use app::{App, ViewMode};
 use handlers::{handle_key_event, KeyAction};
 use service::MusicService;
 use ui::{
-    render_now_playing, render_visualizer, render_queue, render_browse_view,
-    render_search_view, render_downloads_view, render_library_view, render_status_bar,
+    render_now_playing, render_queue, render_browse_view,
+    render_search_view, render_search_preview, render_downloads_view, render_library_view, render_status_bar,
     render_artist_detail_view, render_album_detail_view, render_help_panel, HelpPanelState,
-    render_dialog, DialogRenderState,
+    render_dialog, DialogRenderState, SearchPreviewState,
 };
 
 #[tokio::main]
@@ -136,17 +137,24 @@ fn render_ui(f: &mut Frame, app: &mut App) {
     // Clone theme early to avoid borrow conflicts with mutable app access
     let theme = app.config.theme.clone();
 
+    // Now Playing height: taller when visualizer is enabled
+    let now_playing_height = if app.show_visualizer && app.visualizer.is_some() {
+        14  // Extra space for visualizer
+    } else {
+        9
+    };
+
     let mut constraints = vec![
-        Constraint::Length(3),  // Header
-        Constraint::Length(9),  // Now Playing
+        Constraint::Length(3),            // Header
+        Constraint::Length(now_playing_height),  // Now Playing (with optional visualizer)
     ];
 
-    if app.show_visualizer && app.visualizer.is_some() {
-        constraints.push(Constraint::Length(7));
+    if app.show_debug {
+        constraints.push(Constraint::Percentage(50));  // Main content
+        constraints.push(Constraint::Percentage(25));  // Debug panel
+    } else {
+        constraints.push(Constraint::Min(10));  // Main content takes all remaining space
     }
-
-    constraints.push(Constraint::Percentage(50));  // Main content
-    constraints.push(Constraint::Percentage(25));  // Debug panel
     constraints.push(Constraint::Length(3));       // Status bar
 
     let main_chunks = Layout::default()
@@ -197,22 +205,12 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         radio_seed: app.playback.radio_seed.clone(),
         local_queue_len: app.local_queue.len(),
         album_art_cache: &mut app.album_art_cache,
+        visualizer: if app.show_visualizer { app.visualizer.as_ref() } else { None },
+        video_mode: app.playback.video_mode,
     };
     let progress_bar_area = render_now_playing(f, &mut { now_playing_state }, main_chunks[chunk_index], &theme);
     app.clickable_areas.progress_bar = progress_bar_area;
     chunk_index += 1;
-
-    // Visualizer
-    if app.show_visualizer && app.visualizer.is_some() {
-        render_visualizer(
-            f,
-            app.visualizer.as_ref(),
-            app.playback.is_playing,
-            main_chunks[chunk_index],
-            &theme,
-        );
-        chunk_index += 1;
-    }
 
     // Main content area
     let content_area = main_chunks[chunk_index];
@@ -243,27 +241,29 @@ fn render_ui(f: &mut Frame, app: &mut App) {
     }
     chunk_index += 1;
 
-    // Debug panel
-    let debug_text: String = app.debug_log
-        .iter()
-        .rev()
-        .take(10)
-        .rev()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n");
+    // Debug panel (only shown when enabled)
+    if app.show_debug {
+        let debug_text: String = app.debug_log
+            .iter()
+            .rev()
+            .take(10)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
 
-    let debug_panel = Paragraph::new(debug_text)
-        .style(Style::default().fg(theme.text_muted()))
-        .wrap(Wrap { trim: false })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Debug Log [Space+e: export | Space+c: clear]")
-                .border_style(Style::default().fg(theme.border_normal())),
-        );
-    f.render_widget(debug_panel, main_chunks[chunk_index]);
-    chunk_index += 1;
+        let debug_panel = Paragraph::new(debug_text)
+            .style(Style::default().fg(theme.text_muted()))
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Debug Log [Space+e: export | Space+c: clear | Space+d: hide]")
+                    .border_style(Style::default().fg(theme.border_normal())),
+            );
+        f.render_widget(debug_panel, main_chunks[chunk_index]);
+        chunk_index += 1;
+    }
 
     // Status bar
     let status_state = ui::status_bar::StatusBarState {
@@ -321,7 +321,18 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 vec![]
             };
 
-            let mut search_state = ui::search::SearchViewState {
+            // Split area for search results and preview panel
+            let (search_area, preview_area) = if app.search.show_preview {
+                let split = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+                    .split(area);
+                (split[0], Some(split[1]))
+            } else {
+                (area, None)
+            };
+
+            let search_state = ui::search::SearchViewState {
                 search_query: &app.search.query,
                 search_results: app.search_results.as_ref(),
                 search_tab: app.search.tab,
@@ -338,12 +349,24 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                 page: app.search.page,
                 has_more: app.search.has_more,
                 service_filter: app.search.service_filter,
-                show_preview: app.search.show_preview,
-                album_art_cache: &mut app.album_art_cache,
             };
             app.clickable_areas.left_list = None;
-            let right = render_search_view(f, &mut search_state, area, theme);
+            let right = render_search_view(f, &search_state, search_area, theme);
             app.clickable_areas.right_list = Some(right);
+
+            // Render preview panel as independent panel
+            if let Some(preview_rect) = preview_area {
+                let mut preview_state = SearchPreviewState {
+                    search_results: app.search_results.as_ref(),
+                    search_tab: app.search.tab,
+                    selected_search_track: app.search.selected_track,
+                    selected_search_album: app.search.selected_album,
+                    selected_search_artist: app.search.selected_artist,
+                    service_filter: app.search.service_filter,
+                    album_art_cache: &mut app.album_art_cache,
+                };
+                render_search_preview(f, &mut preview_state, preview_rect, theme);
+            }
         }
         ViewMode::Downloads => {
             let (pending, completed, failed) = app.download_manager

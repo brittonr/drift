@@ -282,6 +282,10 @@ async fn handle_space_command(app: &mut App, key: KeyEvent) -> KeyAction {
             app.debug_log.clear();
             app.add_debug("Debug log cleared".to_string());
         }
+        KeyCode::Char('d') => {
+            app.show_debug = !app.show_debug;
+            app.add_debug(format!("Debug log {}", if app.show_debug { "shown" } else { "hidden" }));
+        }
         KeyCode::Char('e') => {
             let export_path = "/tmp/tidal-tui-export.log";
             let mut content = String::new();
@@ -703,6 +707,18 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
         // v: view detail (open artist/album detail view)
         KeyCode::Char('v') => {
             handle_view_detail(app).await;
+        }
+
+        // V: toggle video mode (YouTube videos play in mpv window)
+        KeyCode::Char('V') => {
+            if app.video_controller.is_some() {
+                app.playback.video_mode = !app.playback.video_mode;
+                let status = if app.playback.video_mode { "ON" } else { "OFF" };
+                app.add_debug(format!("Video mode: {}", status));
+                app.set_status_info(format!("Video mode: {}", status));
+            } else {
+                app.set_status_error("mpv not available for video mode".to_string());
+            }
         }
 
         // Esc: back navigation for detail views

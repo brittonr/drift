@@ -19,6 +19,7 @@ pub struct Config {
     pub service: ServiceConfig,
     pub bandcamp: BandcampConfig,
     pub search: SearchConfig,
+    pub video: VideoConfig,
 }
 
 impl Default for Config {
@@ -32,6 +33,7 @@ impl Default for Config {
             service: ServiceConfig::default(),
             bandcamp: BandcampConfig::default(),
             search: SearchConfig::default(),
+            video: VideoConfig::default(),
         }
     }
 }
@@ -119,6 +121,34 @@ impl Default for BandcampConfig {
             cookies_from_browser: None,
             username: None,
             cache_duration_hours: 24,
+        }
+    }
+}
+
+/// Video playback configuration (for YouTube video mode)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoConfig {
+    /// Path to mpv executable (default: "mpv" from PATH)
+    pub mpv_path: String,
+    /// IPC socket path for mpv control
+    pub socket_path: String,
+    /// Window geometry (e.g., "1280x720" or "50%x50%")
+    pub window_geometry: Option<String>,
+    /// Start video in fullscreen mode
+    pub fullscreen: bool,
+    /// Hardware acceleration mode (auto, vaapi, nvdec, vdpau, etc.)
+    pub hwdec: String,
+}
+
+impl Default for VideoConfig {
+    fn default() -> Self {
+        Self {
+            mpv_path: "mpv".to_string(),
+            socket_path: "/tmp/mpv-tidal-tui.sock".to_string(),
+            window_geometry: None,
+            fullscreen: false,
+            hwdec: "auto".to_string(),
         }
     }
 }

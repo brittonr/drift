@@ -8,7 +8,7 @@ use ratatui::{
 use ratatui_image::StatefulImage;
 
 use crate::album_art::AlbumArtCache;
-use crate::service::{CoverArt, SearchResults, ServiceType, Track, Album};
+use crate::service::{SearchResults, ServiceType};
 use super::styles::{format_track_with_indicator, is_track_playing, service_badge};
 use super::theme::Theme;
 
@@ -44,15 +44,22 @@ pub struct SearchViewState<'a> {
     pub has_more: bool,
     /// Service filter (None = all, Some = specific service)
     pub service_filter: Option<ServiceType>,
-    /// Show preview panel
-    pub show_preview: bool,
-    /// Album art cache for preview
+}
+
+/// State for the standalone search preview panel
+pub struct SearchPreviewState<'a> {
+    pub search_results: Option<&'a SearchResults>,
+    pub search_tab: SearchTab,
+    pub selected_search_track: usize,
+    pub selected_search_album: usize,
+    pub selected_search_artist: usize,
+    pub service_filter: Option<ServiceType>,
     pub album_art_cache: &'a mut AlbumArtCache,
 }
 
 pub fn render_search_view(
     f: &mut Frame,
-    state: &mut SearchViewState,
+    state: &SearchViewState,
     area: Rect,
     theme: &Theme,
 ) -> Rect {
@@ -68,21 +75,10 @@ pub fn render_search_view(
         .constraints(constraints)
         .split(area);
 
-    let content_area = if state.filter_active {
+    let results_area = if state.filter_active {
         search_chunks[2]
     } else {
         search_chunks[1]
-    };
-
-    // Split for preview panel if enabled
-    let (results_area, preview_area) = if state.show_preview {
-        let split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-            .split(content_area);
-        (split[0], Some(split[1]))
-    } else {
-        (content_area, None)
     };
 
     // Search input box with enhanced hints
@@ -304,11 +300,6 @@ pub fn render_search_view(
         f.render_widget(empty, results_area);
     }
 
-    // Render preview panel if enabled
-    if let Some(preview_rect) = preview_area {
-        render_preview_panel(f, state, preview_rect, theme);
-    }
-
     // Render history suggestions popup when typing and suggestions available
     if state.show_suggestions && !state.history_suggestions.is_empty() && state.is_searching {
         render_history_suggestions(f, state, search_chunks[0], theme);
@@ -317,10 +308,10 @@ pub fn render_search_view(
     results_area
 }
 
-/// Render the preview panel with cover art and track/album info
-fn render_preview_panel(
+/// Render the standalone search preview panel with cover art and track/album info
+pub fn render_search_preview(
     f: &mut Frame,
-    state: &mut SearchViewState,
+    state: &mut SearchPreviewState,
     area: Rect,
     theme: &Theme,
 ) {
@@ -393,14 +384,23 @@ fn render_preview_panel(
         }
     };
 
-    // Layout: art on top, info below
+    // Create the outer block for the panel
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Preview [P: toggle] ")
+        .border_style(Style::default().fg(theme.secondary()));
+
+    let inner_area = outer_block.inner(area);
+    f.render_widget(outer_block, area);
+
+    // Layout: art on top, info below - larger album art for better visibility
     let preview_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(12), // Album art area
-            Constraint::Min(4),     // Info area
+            Constraint::Percentage(75), // Album art area - larger proportion
+            Constraint::Min(4),         // Info area
         ])
-        .split(area);
+        .split(inner_area);
 
     let art_area = preview_chunks[0];
     let info_area = preview_chunks[1];
@@ -425,19 +425,16 @@ fn render_preview_panel(
 
     // Render placeholder if no art
     if !has_art {
-        let placeholder = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(""),
-            Line::from(Span::styled("No Preview", Style::default().fg(theme.text_disabled()))),
-            Line::from(""),
-            Line::from(Span::styled("(Loading...)", Style::default().fg(theme.text_disabled()).add_modifier(Modifier::ITALIC))),
-        ])
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border_normal())),
-        );
+        // Center the placeholder text vertically in the art area
+        let art_height = art_area.height as usize;
+        let padding_lines = art_height.saturating_sub(4) / 2;
+        let mut placeholder_lines: Vec<Line> = (0..padding_lines).map(|_| Line::from("")).collect();
+        placeholder_lines.push(Line::from(Span::styled("No Preview", Style::default().fg(theme.text_disabled()).add_modifier(Modifier::BOLD))));
+        placeholder_lines.push(Line::from(""));
+        placeholder_lines.push(Line::from(Span::styled("Loading...", Style::default().fg(theme.text_disabled()).add_modifier(Modifier::ITALIC))));
+
+        let placeholder = Paragraph::new(placeholder_lines)
+            .alignment(Alignment::Center);
         f.render_widget(placeholder, art_area);
     }
 
@@ -457,19 +454,16 @@ fn render_preview_panel(
     }
 
     if !extra_info.is_empty() {
-        info_lines.push(Line::from(""));
         info_lines.push(Line::from(vec![
             Span::styled(&extra_info, Style::default().fg(theme.text_muted())),
         ]));
     }
 
+    if info_lines.is_empty() {
+        info_lines.push(Line::from(Span::styled("Select a result to preview", Style::default().fg(theme.text_disabled()))));
+    }
+
     let info_block = Paragraph::new(info_lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Preview [P: toggle]")
-                .border_style(Style::default().fg(theme.border_normal())),
-        )
         .alignment(Alignment::Center);
 
     f.render_widget(info_block, info_area);

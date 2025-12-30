@@ -2,13 +2,23 @@ use anyhow::Result;
 
 use super::App;
 use super::state::{RadioSeed, ViewMode};
-use crate::service::{CoverArt, MusicService, Track};
+use crate::service::{CoverArt, MusicService, ServiceType, Track};
 use crate::ui::{SearchTab, LibraryTab};
 
 impl App {
     pub async fn play_track(&mut self, track: Track) -> Result<()> {
         self.add_debug(format!("Playing: {} - {}", track.artist, track.title));
 
+        // Check if we should use video mode (YouTube track + video mode enabled + mpv available)
+        let use_video = track.service == ServiceType::YouTube
+            && self.playback.video_mode
+            && self.video_controller.is_some();
+
+        if use_video {
+            return self.play_track_video(track).await;
+        }
+
+        // Standard audio playback via MPD
         self.add_debug(format!("Getting stream URL for track ID {} ({})...", track.id, track.service));
         let stream_url = match self.music_service.get_stream_url_for_track(&track).await {
             Ok(url) => {
@@ -20,6 +30,13 @@ impl App {
                 return Err(e);
             }
         };
+
+        // Stop mpv if it's running
+        if let Some(ref mut mpv) = self.video_controller {
+            if mpv.is_running() {
+                mpv.stop(&mut self.debug_log).await.ok();
+            }
+        }
 
         self.add_debug("Clearing MPD queue...".to_string());
         if let Err(e) = self.mpd_controller.clear_queue(&mut self.debug_log).await {
@@ -44,6 +61,30 @@ impl App {
         self.record_history(&track);
         self.current_track = Some(track);
         self.add_debug("Playback started".to_string());
+        Ok(())
+    }
+
+    /// Play a YouTube track using mpv video player
+    async fn play_track_video(&mut self, track: Track) -> Result<()> {
+        self.add_debug(format!("Playing video: {} - {}", track.artist, track.title));
+
+        // Pause MPD if playing
+        if self.playback.is_playing {
+            self.mpd_controller.pause(&mut self.debug_log).await.ok();
+        }
+
+        // Construct YouTube URL (mpv handles yt-dlp internally)
+        let video_url = format!("https://www.youtube.com/watch?v={}", track.id);
+
+        // Start mpv with the video
+        if let Some(ref mut mpv) = self.video_controller {
+            mpv.start(&video_url, &mut self.debug_log).await?;
+        }
+
+        self.playback.is_playing = true;
+        self.record_history(&track);
+        self.current_track = Some(track);
+        self.add_debug("Video playback started in mpv".to_string());
         Ok(())
     }
 
@@ -85,18 +126,54 @@ impl App {
     }
 
     pub async fn toggle_playback(&mut self) -> Result<()> {
-        if self.playback.is_playing {
-            self.add_debug("Pausing playback...".to_string());
-            self.mpd_controller.pause(&mut self.debug_log).await?;
+        // Check if we're in video mode with mpv running
+        let using_video = self.playback.video_mode
+            && self.video_controller.as_mut().map_or(false, |m| m.is_running());
+
+        if using_video {
+            if let Some(ref mut mpv) = self.video_controller {
+                mpv.toggle_pause(&mut self.debug_log).await?;
+            }
         } else {
-            self.add_debug("Resuming playback...".to_string());
-            self.mpd_controller.play(&mut self.debug_log).await?;
+            if self.playback.is_playing {
+                self.add_debug("Pausing playback...".to_string());
+                self.mpd_controller.pause(&mut self.debug_log).await?;
+            } else {
+                self.add_debug("Resuming playback...".to_string());
+                self.mpd_controller.play(&mut self.debug_log).await?;
+            }
         }
         self.playback.is_playing = !self.playback.is_playing;
         Ok(())
     }
 
     pub async fn check_mpd_status(&mut self) -> Result<()> {
+        // Check if we're in video mode with mpv running
+        let using_video = self.playback.video_mode
+            && self.video_controller.as_mut().map_or(false, |m| m.is_running());
+
+        if using_video {
+            // Get status from mpv
+            if let Some(ref mut mpv) = self.video_controller {
+                if let Ok(status) = mpv.get_status().await {
+                    self.playback.is_playing = status.is_playing;
+
+                    // Update current_song with mpv timing
+                    if let Some(ref track) = self.current_track {
+                        self.current_song = Some(crate::mpd::CurrentSong {
+                            artist: track.artist.clone(),
+                            title: track.title.clone(),
+                            album: track.album.clone(),
+                            elapsed: status.elapsed,
+                            duration: status.duration,
+                        });
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        // Standard MPD status check
         let status = self.mpd_controller.get_status(&mut self.debug_log).await?;
 
         if status.is_playing != self.playback.is_playing {
