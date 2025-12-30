@@ -20,7 +20,7 @@ impl AlbumArtCache {
     pub fn new() -> Result<Self> {
         let cache_dir = dirs::cache_dir()
             .context("Failed to get cache directory")?
-            .join("tidal-tui")
+            .join("drift")
             .join("album-art");
 
         // Create cache directory if it doesn't exist

@@ -25,7 +25,7 @@ impl CavaVisualizer {
         // Use XDG config directory
         let config_dir = dirs::config_dir()
             .context("Failed to get config directory")?
-            .join("tidal-tui");
+            .join("drift");
 
         fs::create_dir_all(&config_dir)
             .context("Failed to create config directory")?;

@@ -287,7 +287,7 @@ async fn handle_space_command(app: &mut App, key: KeyEvent) -> KeyAction {
             app.add_debug(format!("Debug log {}", if app.show_debug { "shown" } else { "hidden" }));
         }
         KeyCode::Char('e') => {
-            let export_path = "/tmp/tidal-tui-export.log";
+            let export_path = "/tmp/drift-export.log";
             let mut content = String::new();
             for line in &app.debug_log {
                 content.push_str(line);

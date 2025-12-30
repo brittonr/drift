@@ -52,7 +52,7 @@ impl HistoryDb {
     fn get_db_path() -> Result<PathBuf> {
         let data_dir = dirs::data_dir()
             .context("Failed to get data directory")?
-            .join("tidal-tui");
+            .join("drift");
         std::fs::create_dir_all(&data_dir)
             .context("Failed to create data directory")?;
         Ok(data_dir.join("history.db"))

@@ -323,7 +323,7 @@ impl App {
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/tmp/tidal-tui-debug.log")
+            .open("/tmp/drift-debug.log")
         {
             use std::io::Write;
             let timestamp = chrono::Local::now().format("%H:%M:%S");

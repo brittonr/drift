@@ -145,7 +145,7 @@ impl Default for VideoConfig {
     fn default() -> Self {
         Self {
             mpv_path: "mpv".to_string(),
-            socket_path: "/tmp/mpv-tidal-tui.sock".to_string(),
+            socket_path: "/tmp/mpv-drift.sock".to_string(),
             window_geometry: None,
             fullscreen: false,
             hwdec: "auto".to_string(),
@@ -246,7 +246,7 @@ impl Config {
     pub fn config_path() -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
             .context("Failed to get config directory")?
-            .join("tidal-tui");
+            .join("drift");
 
         fs::create_dir_all(&config_dir)
             .context("Failed to create config directory")?;

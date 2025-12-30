@@ -111,7 +111,7 @@ impl TidalClient {
 
     fn config_path() -> Result<PathBuf> {
         let mut path = config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
-        path.push("tidal-tui");
+        path.push("drift");
         fs::create_dir_all(&path)?;
         path.push("credentials.json");
         Ok(path)

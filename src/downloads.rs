@@ -64,7 +64,7 @@ impl DownloadManager {
         } else {
             dirs::cache_dir()
                 .context("Failed to get cache directory")?
-                .join("tidal-tui")
+                .join("drift")
                 .join("downloads")
         };
 

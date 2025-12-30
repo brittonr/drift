@@ -54,7 +54,7 @@ impl MixedPlaylistStorage {
     fn storage_path() -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not find config directory"))?;
-        Ok(config_dir.join("tidal-tui").join(Self::FILE_NAME))
+        Ok(config_dir.join("drift").join(Self::FILE_NAME))
     }
 
     /// Load storage from disk, returning default if not found

@@ -1,5 +1,5 @@
 {
-  description = "Tidal TUI - A proper terminal client for Tidal";
+  description = "Drift - A terminal music player for streaming services";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -43,8 +43,8 @@
           buildInputs = buildInputs ++ runtimeDependencies;
 
           shellHook = ''
-            echo "Tidal TUI Development Environment"
-            echo "================================="
+            echo "Drift Development Environment"
+            echo "============================="
             echo ""
             echo "Commands:"
             echo "  cargo build    - Build the project"
@@ -57,7 +57,7 @@
         };
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "tidal-tui";
+          pname = "drift";
           version = "0.1.0";
 
           src = ./.;
