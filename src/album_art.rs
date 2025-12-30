@@ -1,14 +1,15 @@
 use anyhow::{Context, Result};
 use image::DynamicImage;
+use lru::LruCache;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 /// Handles downloading and caching album art
 pub struct AlbumArtCache {
     cache_dir: PathBuf,
-    /// In-memory cache of loaded images
-    images: HashMap<String, DynamicImage>,
+    /// In-memory LRU cache of loaded images (bounded to prevent memory exhaustion)
+    images: LruCache<String, DynamicImage>,
     /// Protocol handler for rendering images
     picker: Option<Picker>,
     /// Current image protocol state (for rendering)
@@ -16,8 +17,8 @@ pub struct AlbumArtCache {
 }
 
 impl AlbumArtCache {
-    /// Create a new album art cache
-    pub fn new() -> Result<Self> {
+    /// Create a new album art cache with specified capacity
+    pub fn new(capacity: usize) -> Result<Self> {
         let cache_dir = dirs::cache_dir()
             .context("Failed to get cache directory")?
             .join("drift")
@@ -38,9 +39,13 @@ impl AlbumArtCache {
             let _ = p.guess_protocol();
         }
 
+        // Use at least 10 entries to avoid degenerate cache behavior
+        let cap = NonZeroUsize::new(capacity.max(10))
+            .expect("capacity should be non-zero");
+
         Ok(Self {
             cache_dir,
-            images: HashMap::new(),
+            images: LruCache::new(cap),
             picker,
             current_protocol: None,
         })
@@ -55,9 +60,9 @@ impl AlbumArtCache {
     pub async fn get_album_art(&mut self, cover_id: &str, size: u32) -> Result<&DynamicImage> {
         let cache_key = format!("{}_{}", cover_id, size);
 
-        // Check if already in memory
-        if self.images.contains_key(&cache_key) {
-            return Ok(self.images.get(&cache_key).unwrap());
+        // Check if already in memory (use contains to avoid borrow issues)
+        if self.images.contains(&cache_key) {
+            return Ok(self.images.get(&cache_key).expect("key exists after contains check"));
         }
 
         let cache_path = self.get_cache_path(cover_id, size);
@@ -87,10 +92,10 @@ impl AlbumArtCache {
                 .context("Failed to decode album art")?
         };
 
-        // Store in memory cache
-        self.images.insert(cache_key.clone(), image);
+        // Store in memory cache (LRU will evict oldest if at capacity)
+        self.images.put(cache_key.clone(), image);
 
-        Ok(self.images.get(&cache_key).unwrap())
+        Ok(self.images.get(&cache_key).expect("just inserted"))
     }
 
     /// Download and cache album art from a URL (for YouTube/Bandcamp)
@@ -100,8 +105,8 @@ impl AlbumArtCache {
         let cache_key = format!("url_{}_{}", url_hash, size);
 
         // Check if already in memory
-        if self.images.contains_key(&cache_key) {
-            return Ok(self.images.get(&cache_key).unwrap());
+        if self.images.contains(&cache_key) {
+            return Ok(self.images.get(&cache_key).expect("key exists after contains check"));
         }
 
         let cache_path = self.cache_dir.join(format!("{}.jpg", cache_key));
@@ -136,10 +141,10 @@ impl AlbumArtCache {
             img
         };
 
-        // Store in memory cache
-        self.images.insert(cache_key.clone(), image);
+        // Store in memory cache (LRU will evict oldest if at capacity)
+        self.images.put(cache_key.clone(), image);
 
-        Ok(self.images.get(&cache_key).unwrap())
+        Ok(self.images.get(&cache_key).expect("just inserted"))
     }
 
     /// Simple hash function for URLs to create safe filenames
@@ -155,7 +160,7 @@ impl AlbumArtCache {
     pub fn has_url_cached(&self, url: &str, size: u32) -> bool {
         let url_hash = Self::hash_url(url);
         let cache_key = format!("url_{}_{}", url_hash, size);
-        self.images.contains_key(&cache_key)
+        self.images.contains(&cache_key)
     }
 
     /// Set current image from URL cache
@@ -163,7 +168,7 @@ impl AlbumArtCache {
         let url_hash = Self::hash_url(url);
         let cache_key = format!("url_{}_{}", url_hash, size);
 
-        if let Some(image) = self.images.get(&cache_key) {
+        if let Some(image) = self.images.peek(&cache_key) {
             if let Some(ref mut picker) = self.picker {
                 let protocol = picker.new_resize_protocol(image.clone());
                 self.current_protocol = Some(protocol);
@@ -177,7 +182,7 @@ impl AlbumArtCache {
     pub fn set_current_image(&mut self, cover_id: &str, size: u32) -> Result<()> {
         let cache_key = format!("{}_{}", cover_id, size);
 
-        if let Some(image) = self.images.get(&cache_key) {
+        if let Some(image) = self.images.peek(&cache_key) {
             if let Some(ref mut picker) = self.picker {
                 // Create a resize protocol for this image
                 let protocol = picker.new_resize_protocol(image.clone());
@@ -209,16 +214,16 @@ impl AlbumArtCache {
         self.images.len()
     }
 
-    /// Get a cached image if available (non-blocking)
+    /// Get a cached image if available (non-blocking, doesn't update LRU order)
     pub fn get_cached(&self, cover_id: &str, size: u32) -> Option<&DynamicImage> {
         let cache_key = format!("{}_{}", cover_id, size);
-        self.images.get(&cache_key)
+        self.images.peek(&cache_key)
     }
 
     /// Check if an image is in the cache
     pub fn has_cached(&self, cover_id: &str, size: u32) -> bool {
         let cache_key = format!("{}_{}", cover_id, size);
-        self.images.contains_key(&cache_key)
+        self.images.contains(&cache_key)
     }
 
     /// Check if cover art is cached (handles CoverArt enum)

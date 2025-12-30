@@ -201,9 +201,9 @@ impl App {
             None
         };
 
-        // Initialize album art cache
-        let album_art_cache = AlbumArtCache::new()?;
-        debug_log.push_back("Album art cache initialized".to_string());
+        // Initialize album art cache with configured size
+        let album_art_cache = AlbumArtCache::new(config.ui.album_art_cache_size)?;
+        debug_log.push_back(format!("Album art cache initialized (max {} images)", config.ui.album_art_cache_size));
 
         // Load persisted queue
         let (local_queue, pending_restore) = if config.playback.resume_on_startup {

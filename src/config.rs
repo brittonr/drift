@@ -212,6 +212,8 @@ pub struct UiConfig {
     pub visualizer_bars: u8,
     /// Status check interval in milliseconds
     pub status_interval_ms: u64,
+    /// Maximum album art images to keep in memory (LRU eviction)
+    pub album_art_cache_size: usize,
 }
 
 impl Default for UiConfig {
@@ -221,6 +223,7 @@ impl Default for UiConfig {
             show_album_art: true,
             visualizer_bars: 20,
             status_interval_ms: 200,
+            album_art_cache_size: 50,
         }
     }
 }

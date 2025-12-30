@@ -52,3 +52,6 @@ urlencoding = "2"
 
 # Fuzzy matching for search (used by helix-editor, ~6x faster than skim)
 nucleo = "0.5"
+
+# LRU cache for bounded memory usage
+lru = "0.12"
