@@ -115,21 +115,13 @@ pub struct Artist {
 
 /// Search results from any music service
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct SearchResults {
     pub tracks: Vec<Track>,
     pub albums: Vec<Album>,
     pub artists: Vec<Artist>,
 }
 
-impl Default for SearchResults {
-    fn default() -> Self {
-        Self {
-            tracks: Vec::new(),
-            albums: Vec::new(),
-            artists: Vec::new(),
-        }
-    }
-}
 
 /// The core music service abstraction
 ///

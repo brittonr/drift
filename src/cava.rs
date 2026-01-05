@@ -137,7 +137,7 @@ noise_reduction = 77
 
     pub fn draw_bars(&self) -> String {
         let bars = self.get_bars();
-        let bar_chars = vec!['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        let bar_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
         bars.iter()
             .map(|&height| {

@@ -940,7 +940,7 @@ impl App {
                 self.search_results.as_ref().and_then(|r| {
                     // Apply service filter
                     let filtered: Vec<_> = r.tracks.iter()
-                        .filter(|t| self.search.service_filter.map_or(true, |s| t.service == s))
+                        .filter(|t| self.search.service_filter.is_none_or(|s| t.service == s))
                         .collect();
                     filtered.get(self.search.selected_track).map(|t| t.cover_art.clone())
                 })
@@ -948,7 +948,7 @@ impl App {
             crate::ui::SearchTab::Albums => {
                 self.search_results.as_ref().and_then(|r| {
                     let filtered: Vec<_> = r.albums.iter()
-                        .filter(|a| self.search.service_filter.map_or(true, |s| a.service == s))
+                        .filter(|a| self.search.service_filter.is_none_or(|s| a.service == s))
                         .collect();
                     filtered.get(self.search.selected_album).map(|a| a.cover_art.clone())
                 })

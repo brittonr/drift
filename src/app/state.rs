@@ -186,8 +186,10 @@ pub struct HelpState {
 
 /// Dialog mode for text input and playlist selection
 #[derive(Clone, PartialEq)]
+#[derive(Default)]
 pub enum DialogMode {
     /// Not showing any dialog
+    #[default]
     None,
     /// Creating a new playlist - text input for name
     CreatePlaylist,
@@ -208,11 +210,6 @@ pub enum DialogMode {
     },
 }
 
-impl Default for DialogMode {
-    fn default() -> Self {
-        DialogMode::None
-    }
-}
 
 /// State for dialog inputs
 #[derive(Default)]

@@ -482,10 +482,8 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
             if app.view_mode == ViewMode::Library {
                 app.library.loaded = false;
                 app.add_debug("Refreshing favorites...".to_string());
-            } else {
-                if let Err(e) = app.mpd_controller.toggle_repeat(&mut app.debug_log).await {
-                    app.set_status_error(format!("Repeat toggle error: {}", e));
-                }
+            } else if let Err(e) = app.mpd_controller.toggle_repeat(&mut app.debug_log).await {
+                app.set_status_error(format!("Repeat toggle error: {}", e));
             }
         }
         KeyCode::Char('s') => {
@@ -515,10 +513,8 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 app.library.selected_album = 0;
                 app.library.selected_artist = 0;
                 app.add_debug(format!("Library filter: {:?}", app.library.service_filter));
-            } else {
-                if let Err(e) = app.mpd_controller.toggle_single(&mut app.debug_log).await {
-                    app.set_status_error(format!("Single toggle error: {}", e));
-                }
+            } else if let Err(e) = app.mpd_controller.toggle_single(&mut app.debug_log).await {
+                app.set_status_error(format!("Single toggle error: {}", e));
             }
         }
 
@@ -782,8 +778,8 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
 
         // e: rename/edit playlist (when on playlists panel)
         KeyCode::Char('e') => {
-            if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 0 {
-                if app.browse.selected_playlist < app.playlists.len() {
+            if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 0
+                && app.browse.selected_playlist < app.playlists.len() {
                     let playlist = app.playlists[app.browse.selected_playlist].clone();
                     if playlist.id.starts_with("demo-") {
                         app.add_debug("Cannot rename demo playlists".to_string());
@@ -791,7 +787,6 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                         app.open_rename_playlist_dialog(&playlist);
                     }
                 }
-            }
         }
 
         // X: delete playlist (when on playlists panel) or remove track from playlist (when on tracks panel)
@@ -1082,8 +1077,8 @@ async fn handle_play(app: &mut App) {
 }
 
 async fn handle_delete(app: &mut App) {
-    if app.playback.show_queue && !app.local_queue.is_empty() {
-        if app.playback.selected_queue_item < app.local_queue.len() {
+    if app.playback.show_queue && !app.local_queue.is_empty()
+        && app.playback.selected_queue_item < app.local_queue.len() {
             if let Err(e) = app.mpd_controller.remove_from_queue(app.playback.selected_queue_item, &mut app.debug_log).await {
                 app.set_status_error(format!("Failed to remove track: {}", e));
             } else {
@@ -1095,7 +1090,6 @@ async fn handle_delete(app: &mut App) {
                 app.playback.queue_dirty = true;
             }
         }
-    }
 }
 
 async fn handle_queue_move_up(app: &mut App) {

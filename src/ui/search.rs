@@ -144,7 +144,7 @@ pub fn render_search_view(
                 let filtered_tracks: Vec<_> = results
                     .tracks
                     .iter()
-                    .filter(|t| state.service_filter.map_or(true, |s| t.service == s))
+                    .filter(|t| state.service_filter.is_none_or(|s| t.service == s))
                     .collect();
 
                 let items: Vec<ListItem> = filtered_tracks
@@ -195,7 +195,7 @@ pub fn render_search_view(
                 let filtered_albums: Vec<_> = results
                     .albums
                     .iter()
-                    .filter(|a| state.service_filter.map_or(true, |s| a.service == s))
+                    .filter(|a| state.service_filter.is_none_or(|s| a.service == s))
                     .collect();
 
                 let items: Vec<ListItem> = filtered_albums
@@ -240,7 +240,7 @@ pub fn render_search_view(
                 let filtered_artists: Vec<_> = results
                     .artists
                     .iter()
-                    .filter(|a| state.service_filter.map_or(true, |s| a.service == s))
+                    .filter(|a| state.service_filter.is_none_or(|s| a.service == s))
                     .collect();
 
                 let items: Vec<ListItem> = filtered_artists
@@ -321,7 +321,7 @@ pub fn render_search_preview(
             if let Some(results) = state.search_results {
                 // Apply service filter
                 let filtered: Vec<_> = results.tracks.iter()
-                    .filter(|t| state.service_filter.map_or(true, |s| t.service == s))
+                    .filter(|t| state.service_filter.is_none_or(|s| t.service == s))
                     .collect();
                 if let Some(track) = filtered.get(state.selected_search_track) {
                     (
@@ -346,7 +346,7 @@ pub fn render_search_preview(
         SearchTab::Albums => {
             if let Some(results) = state.search_results {
                 let filtered: Vec<_> = results.albums.iter()
-                    .filter(|a| state.service_filter.map_or(true, |s| a.service == s))
+                    .filter(|a| state.service_filter.is_none_or(|s| a.service == s))
                     .collect();
                 if let Some(album) = filtered.get(state.selected_search_album) {
                     (
@@ -366,14 +366,14 @@ pub fn render_search_preview(
             // Artists don't have cover art in our model
             if let Some(results) = state.search_results {
                 let filtered: Vec<_> = results.artists.iter()
-                    .filter(|a| state.service_filter.map_or(true, |s| a.service == s))
+                    .filter(|a| state.service_filter.is_none_or(|s| a.service == s))
                     .collect();
                 if let Some(artist) = filtered.get(state.selected_search_artist) {
                     (
                         None,
                         artist.name.clone(),
                         String::new(),
-                        format!("{}", service_badge(artist.service)),
+                        service_badge(artist.service).to_string(),
                     )
                 } else {
                     (None, String::new(), String::new(), String::new())

@@ -129,7 +129,7 @@ pub fn render_library_view(
             let filtered_tracks: Vec<_> = state
                 .favorite_tracks
                 .iter()
-                .filter(|t| state.service_filter.map_or(true, |s| t.service == s))
+                .filter(|t| state.service_filter.is_none_or(|s| t.service == s))
                 .collect();
 
             let items: Vec<ListItem> = filtered_tracks
@@ -173,7 +173,7 @@ pub fn render_library_view(
             let filtered_albums: Vec<_> = state
                 .favorite_albums
                 .iter()
-                .filter(|a| state.service_filter.map_or(true, |s| a.service == s))
+                .filter(|a| state.service_filter.is_none_or(|s| a.service == s))
                 .collect();
 
             let items: Vec<ListItem> = filtered_albums
@@ -204,7 +204,7 @@ pub fn render_library_view(
             let filtered_artists: Vec<_> = state
                 .favorite_artists
                 .iter()
-                .filter(|a| state.service_filter.map_or(true, |s| a.service == s))
+                .filter(|a| state.service_filter.is_none_or(|s| a.service == s))
                 .collect();
 
             let items: Vec<ListItem> = filtered_artists

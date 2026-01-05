@@ -145,16 +145,14 @@ impl App {
             } else {
                 return Ok(());
             }
-        } else {
-            if let Some(ref results) = self.search_results {
-                if self.search.tab == SearchTab::Tracks && self.search.selected_track < results.tracks.len() {
-                    results.tracks[self.search.selected_track].clone()
-                } else {
-                    return Ok(());
-                }
+        } else if let Some(ref results) = self.search_results {
+            if self.search.tab == SearchTab::Tracks && self.search.selected_track < results.tracks.len() {
+                results.tracks[self.search.selected_track].clone()
             } else {
                 return Ok(());
             }
+        } else {
+            return Ok(());
         };
 
         self.add_track_to_queue(track).await
@@ -167,16 +165,14 @@ impl App {
             } else {
                 return Ok(());
             }
-        } else {
-            if let Some(ref results) = self.search_results {
-                if self.search.tab == SearchTab::Tracks && !results.tracks.is_empty() {
-                    results.tracks.clone()
-                } else {
-                    return Ok(());
-                }
+        } else if let Some(ref results) = self.search_results {
+            if self.search.tab == SearchTab::Tracks && !results.tracks.is_empty() {
+                results.tracks.clone()
             } else {
                 return Ok(());
             }
+        } else {
+            return Ok(());
         };
 
         self.add_debug(format!("Adding {} tracks to queue...", tracks_to_add.len()));

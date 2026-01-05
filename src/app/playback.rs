@@ -145,20 +145,18 @@ impl App {
     pub async fn toggle_playback(&mut self) -> Result<()> {
         // Check if we're in video mode with mpv running
         let using_video = self.playback.video_mode
-            && self.video_controller.as_mut().map_or(false, |m| m.is_running());
+            && self.video_controller.as_mut().is_some_and(|m| m.is_running());
 
         if using_video {
             if let Some(ref mut mpv) = self.video_controller {
                 mpv.toggle_pause(&mut self.debug_log).await?;
             }
+        } else if self.playback.is_playing {
+            self.add_debug("Pausing playback...".to_string());
+            self.mpd_controller.pause(&mut self.debug_log).await?;
         } else {
-            if self.playback.is_playing {
-                self.add_debug("Pausing playback...".to_string());
-                self.mpd_controller.pause(&mut self.debug_log).await?;
-            } else {
-                self.add_debug("Resuming playback...".to_string());
-                self.mpd_controller.play(&mut self.debug_log).await?;
-            }
+            self.add_debug("Resuming playback...".to_string());
+            self.mpd_controller.play(&mut self.debug_log).await?;
         }
         self.playback.is_playing = !self.playback.is_playing;
         Ok(())
@@ -167,7 +165,7 @@ impl App {
     pub async fn check_mpd_status(&mut self) -> Result<()> {
         // Check if we're in video mode with mpv running
         let using_video = self.playback.video_mode
-            && self.video_controller.as_mut().map_or(false, |m| m.is_running());
+            && self.video_controller.as_mut().is_some_and(|m| m.is_running());
 
         if using_video {
             // Get status from mpv

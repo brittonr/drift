@@ -144,7 +144,7 @@ impl MixedPlaylistStorage {
     pub fn remove_tracks(&mut self, playlist_id: &str, indices: &[usize]) -> bool {
         if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
             // Remove in reverse order to maintain indices
-            let mut sorted_indices: Vec<_> = indices.iter().copied().collect();
+            let mut sorted_indices: Vec<_> = indices.to_vec();
             sorted_indices.sort_unstable_by(|a, b| b.cmp(a));
             for idx in sorted_indices {
                 if idx < playlist.tracks.len() {

@@ -95,7 +95,7 @@ impl MpdController {
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            debug_log.push_back(format!("✗ Failed to add track"));
+            debug_log.push_back("✗ Failed to add track".to_string());
             if !stderr.is_empty() {
                 debug_log.push_back(format!("  Error: {}", stderr.trim()));
             }
@@ -236,7 +236,7 @@ impl MpdController {
             volume_line
                 .split("volume:")
                 .nth(1)
-                .and_then(|s| s.trim().split_whitespace().next())
+                .and_then(|s| s.split_whitespace().next())
                 .and_then(|v| v.trim_end_matches('%').parse::<u8>().ok())
         } else {
             Some(50)
@@ -448,7 +448,7 @@ impl MpdController {
     pub async fn get_queue(&mut self) -> Result<Vec<QueueItem>> {
         // First try to get with metadata
         let output = self.mpc_cmd()
-            .args(&["playlist", "-f", "%artist%|||%title%|||%album%|||%time%"])
+            .args(["playlist", "-f", "%artist%|||%title%|||%album%|||%time%"])
             .output()?;
 
         if !output.status.success() {
@@ -565,7 +565,7 @@ impl MpdController {
     // Get detailed current playing info
     pub async fn get_current_song(&mut self) -> Result<Option<CurrentSong>> {
         let output = self.mpc_cmd()
-            .args(&["current", "-f", "%artist%|||%title%|||%album%|||%time%"])
+            .args(["current", "-f", "%artist%|||%title%|||%album%|||%time%"])
             .output()?;
 
         if !output.status.success() || output.stdout.is_empty() {

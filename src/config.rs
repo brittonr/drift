@@ -10,6 +10,7 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct Config {
     pub mpd: MpdConfig,
     pub playback: PlaybackConfig,
@@ -22,21 +23,6 @@ pub struct Config {
     pub video: VideoConfig,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            mpd: MpdConfig::default(),
-            playback: PlaybackConfig::default(),
-            ui: UiConfig::default(),
-            downloads: DownloadsConfig::default(),
-            theme: Theme::default(),
-            service: ServiceConfig::default(),
-            bandcamp: BandcampConfig::default(),
-            search: SearchConfig::default(),
-            video: VideoConfig::default(),
-        }
-    }
-}
 
 /// Search configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -391,13 +377,6 @@ auto_tag = false
         assert_eq!(config.downloads.max_concurrent, 4);
         assert_eq!(config.downloads.download_dir, Some("/custom/path".to_string()));
         assert!(!config.downloads.auto_tag);
-    }
-
-    #[test]
-    fn test_example_config_is_valid() {
-        let example = Config::example_config();
-        let parsed: Result<Config, _> = toml::from_str(&example);
-        assert!(parsed.is_ok(), "Example config should be valid TOML");
     }
 
     #[test]

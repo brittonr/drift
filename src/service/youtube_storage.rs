@@ -271,7 +271,7 @@ impl YouTubeStorage {
             .find(|lpt| lpt.playlist_id == playlist_id)
         {
             // Remove in reverse order to maintain indices
-            let mut sorted_indices: Vec<_> = indices.iter().copied().collect();
+            let mut sorted_indices: Vec<_> = indices.to_vec();
             sorted_indices.sort_unstable_by(|a, b| b.cmp(a));
             for idx in sorted_indices {
                 if idx < lpt.track_ids.len() {
