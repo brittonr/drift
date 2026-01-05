@@ -89,6 +89,7 @@ impl SearchCache {
         self.entries.insert(key, entry);
     }
 
+    #[allow(dead_code)]
     pub fn clear_expired(&mut self) {
         let expired_keys: Vec<String> = self
             .entries

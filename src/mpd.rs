@@ -3,7 +3,10 @@ use std::time::Duration;
 use std::process::Command;
 use std::collections::VecDeque;
 
+// QueueItem fields are populated but accessed only via Vec operations (swap, len)
+// The struct is used for queue reordering in handlers/keyboard.rs
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct QueueItem {
     pub position: usize,
     pub artist: String,
@@ -169,6 +172,7 @@ impl MpdController {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn stop(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Executing: mpc stop".to_string());
 
@@ -260,6 +264,7 @@ impl MpdController {
         })
     }
 
+    #[allow(dead_code)]
     pub async fn set_volume(&mut self, volume: u8, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back(format!("Executing: mpc volume {}", volume));
 
@@ -426,6 +431,7 @@ impl MpdController {
     }
 
     // Debug helper to check current MPD queue
+    #[allow(dead_code)]
     pub async fn debug_queue(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("Checking MPD queue...".to_string());
 
@@ -563,6 +569,7 @@ impl MpdController {
     }
 
     // Get detailed current playing info
+    #[allow(dead_code)]
     pub async fn get_current_song(&mut self) -> Result<Option<CurrentSong>> {
         let output = self.mpc_cmd()
             .args(["current", "-f", "%artist%|||%title%|||%album%|||%time%"])
@@ -706,7 +713,9 @@ impl MpdController {
     }
 }
 
+// PlayerStatus fields are populated by get_status but some are unused in current UI
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PlayerStatus {
     pub is_playing: bool,
     pub current_track: Option<String>,

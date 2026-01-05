@@ -317,11 +317,13 @@ impl TidalClient {
     }
 
     // Get tracks from playlist (internal method)
+    #[allow(dead_code)]
     pub async fn get_tracks(&mut self, playlist_id: &str) -> Result<Vec<Track>> {
         self.get_playlist_tracks(playlist_id).await
     }
 
     // Static helper for formatting
+    #[allow(dead_code)]
     pub fn format_track_display(track: &Track) -> String {
         format!(
             "{} - {} ({}:{:02})",
@@ -332,35 +334,43 @@ impl TidalClient {
         )
     }
 
+    #[allow(dead_code)]
     pub fn format_playlist_display(playlist: &Playlist) -> String {
         format!("{} ({} tracks)", playlist.title, playlist.num_tracks)
     }
 
     // Legacy method for Tidal-specific track ID operations
+    #[allow(dead_code)]
     pub async fn add_favorite_track_by_id(&mut self, track_id: u64) -> Result<()> {
         self.add_favorite_track(&track_id.to_string()).await
     }
 
+    #[allow(dead_code)]
     pub async fn remove_favorite_track_by_id(&mut self, track_id: u64) -> Result<()> {
         self.remove_favorite_track(&track_id.to_string()).await
     }
 
+    #[allow(dead_code)]
     pub async fn get_track_radio_by_id(&mut self, track_id: u64, limit: usize) -> Result<Vec<Track>> {
         self.get_track_radio(&track_id.to_string(), limit).await
     }
 
+    #[allow(dead_code)]
     pub async fn get_artist_radio_by_id(&mut self, artist_id: u64, limit: usize) -> Result<Vec<Track>> {
         self.get_artist_radio(&artist_id.to_string(), limit).await
     }
 
+    #[allow(dead_code)]
     pub async fn get_artist_top_tracks_by_id(&mut self, artist_id: u64) -> Result<Vec<Track>> {
         self.get_artist_top_tracks(&artist_id.to_string()).await
     }
 
+    #[allow(dead_code)]
     pub async fn get_artist_albums_by_id(&mut self, artist_id: u64) -> Result<Vec<Album>> {
         self.get_artist_albums(&artist_id.to_string()).await
     }
 
+    #[allow(dead_code)]
     pub async fn add_tracks_to_playlist_by_ids(&mut self, playlist_id: &str, track_ids: &[u64]) -> Result<()> {
         let string_ids: Vec<String> = track_ids.iter().map(|id| id.to_string()).collect();
         self.add_tracks_to_playlist(playlist_id, &string_ids).await

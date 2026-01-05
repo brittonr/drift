@@ -46,6 +46,8 @@ pub struct MixedTrackRef {
     pub cover_art_url: Option<String>,
 }
 
+// MixedPlaylistStorage is prepared for cross-service playlist functionality
+#[allow(dead_code)]
 impl MixedPlaylistStorage {
     const CURRENT_VERSION: u32 = 1;
     const FILE_NAME: &'static str = "mixed_playlists.toml";
@@ -238,6 +240,7 @@ impl MixedPlaylistStorage {
 }
 
 /// Generate a simple UUID-like string for playlist IDs
+#[allow(dead_code)]
 fn uuid_simple() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let duration = SystemTime::now()

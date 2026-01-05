@@ -23,7 +23,9 @@ struct MpvResponse {
     error: String,
 }
 
+// MpvStatus is populated by get_status; is_idle is prepared for future use
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MpvStatus {
     pub is_playing: bool,
     pub elapsed: Duration,
@@ -161,12 +163,14 @@ impl MpvController {
     }
 
     /// Pause playback
+    #[allow(dead_code)]
     pub async fn pause(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("mpv: pause".to_string());
         self.set_property("pause", Value::Bool(true)).await
     }
 
     /// Resume playback
+    #[allow(dead_code)]
     pub async fn resume(&mut self, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back("mpv: resume".to_string());
         self.set_property("pause", Value::Bool(false)).await
@@ -180,6 +184,7 @@ impl MpvController {
     }
 
     /// Seek forward by seconds
+    #[allow(dead_code)]
     pub async fn seek_forward(&mut self, seconds: i64, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back(format!("mpv: seek +{}s", seconds));
         self.send_command(&["seek", &seconds.to_string(), "relative"]).await?;
@@ -187,6 +192,7 @@ impl MpvController {
     }
 
     /// Seek backward by seconds
+    #[allow(dead_code)]
     pub async fn seek_backward(&mut self, seconds: i64, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back(format!("mpv: seek -{}s", seconds));
         self.send_command(&["seek", &(-seconds).to_string(), "relative"]).await?;
@@ -194,6 +200,7 @@ impl MpvController {
     }
 
     /// Seek to absolute position in seconds
+    #[allow(dead_code)]
     pub async fn seek_to(&mut self, seconds: f64, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back(format!("mpv: seek to {}s", seconds));
         self.send_command(&["seek", &seconds.to_string(), "absolute"]).await?;
@@ -201,6 +208,7 @@ impl MpvController {
     }
 
     /// Set volume (0-100)
+    #[allow(dead_code)]
     pub async fn set_volume(&mut self, volume: u8, debug_log: &mut VecDeque<String>) -> Result<()> {
         debug_log.push_back(format!("mpv: volume {}", volume));
         self.set_property("volume", Value::Number(volume.into())).await
@@ -291,6 +299,7 @@ impl MpvController {
     }
 
     /// Set a property on mpv
+    #[allow(dead_code)]
     async fn set_property(&mut self, name: &str, value: Value) -> Result<()> {
         if !self.socket_path.exists() {
             return Err(anyhow::anyhow!("mpv socket not available"));

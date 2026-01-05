@@ -53,6 +53,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn download_all_tracks(&mut self) {
         let tracks: Vec<Track> = match self.view_mode {
             ViewMode::Browse => self.tracks.clone(),

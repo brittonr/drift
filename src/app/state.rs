@@ -81,11 +81,6 @@ impl SearchState {
     }
 }
 
-impl Default for SearchTab {
-    fn default() -> Self {
-        SearchTab::Tracks
-    }
-}
 
 /// Library/Favorites state
 #[derive(Default)]
@@ -99,11 +94,6 @@ pub struct LibraryState {
     pub service_filter: Option<crate::service::ServiceType>,
 }
 
-impl Default for LibraryTab {
-    fn default() -> Self {
-        LibraryTab::Tracks
-    }
-}
 
 /// Downloads state
 #[derive(Default)]

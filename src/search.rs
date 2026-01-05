@@ -125,12 +125,15 @@ impl SearchHistory {
     }
 
     /// Clear all history
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.entries.clear();
     }
 }
 
 /// Enhanced search state with debouncing and history
+// EnhancedSearchState is prepared for enhanced search UX
+#[allow(dead_code)]
 pub struct EnhancedSearchState {
     /// Current search query
     pub query: String,
@@ -152,6 +155,7 @@ pub struct EnhancedSearchState {
     pub filter_active: bool,
 }
 
+#[allow(dead_code)]
 impl EnhancedSearchState {
     pub fn new(config: &SearchConfig) -> Self {
         Self {
@@ -309,12 +313,15 @@ impl EnhancedSearchState {
 }
 
 /// Enhanced parallel search with timeout and progress tracking
+// ParallelSearcher is prepared for multi-service parallel search
+#[allow(dead_code)]
 pub struct ParallelSearcher {
     timeout_secs: u64,
 }
 
 /// Search progress information
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SearchProgress {
     pub services_completed: usize,
     pub services_total: usize,
@@ -324,6 +331,7 @@ pub struct SearchProgress {
     pub errors: Vec<(ServiceType, String)>,
 }
 
+#[allow(dead_code)]
 impl ParallelSearcher {
     pub fn new(timeout_secs: u64) -> Self {
         Self { timeout_secs }

@@ -451,7 +451,7 @@ impl MusicService for MultiServiceManager {
     fn get_cover_url(&self, cover: &CoverArt, size: u32) -> Option<String> {
         match cover {
             CoverArt::Url(url) => Some(url.clone()),
-            CoverArt::ServiceId { id, service } => {
+            CoverArt::ServiceId { id: _, service } => {
                 self.services.get(service).and_then(|s| s.get_cover_url(cover, size))
             }
             CoverArt::None => None,

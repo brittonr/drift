@@ -8,7 +8,9 @@ use crate::service::{CoverArt, ServiceType, Track};
 const MAX_HISTORY_SIZE: usize = 500;
 const DEDUP_WINDOW_SECONDS: i64 = 10;
 
+// HistoryEntry.id is populated by SQLite but only used internally
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct HistoryEntry {
     pub id: i64,
     pub track_id: String,
@@ -177,6 +179,7 @@ impl HistoryDb {
         Ok(entries)
     }
 
+    #[allow(dead_code)]
     pub fn clear_history(&self) -> Result<()> {
         self.conn.execute("DELETE FROM playback_history", [])
             .context("Failed to clear history")?;

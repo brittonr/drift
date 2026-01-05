@@ -52,6 +52,7 @@ pub struct App {
 
     // Core components
     pub music_service: MultiServiceManager,
+    #[allow(dead_code)]
     pub mixed_playlists: MixedPlaylistStorage,
     pub mpd_controller: MpdController,
     pub debug_log: VecDeque<String>,
@@ -402,6 +403,7 @@ impl App {
         self.config = new_config;
     }
 
+    #[allow(dead_code)]
     pub fn update_clickable_areas(
         &mut self,
         left: Option<Rect>,
@@ -556,6 +558,7 @@ impl App {
         self.library.selected_artist = 0;
     }
 
+    #[allow(dead_code)]
     pub fn is_playlist_synced(&self, playlist_id: &str) -> bool {
         if let Some(ref dm) = self.download_manager {
             dm.is_playlist_synced(playlist_id)

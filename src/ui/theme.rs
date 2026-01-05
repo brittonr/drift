@@ -128,6 +128,7 @@ impl Theme {
         Self::parse_color(&self.text_disabled)
     }
 
+    #[allow(dead_code)]
     pub fn border_focused(&self) -> Color {
         Self::parse_color(&self.border_focused)
     }
@@ -166,6 +167,7 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
+    #[allow(dead_code)]
     pub fn border_style(&self, focused: bool) -> Style {
         if focused {
             Style::default().fg(self.border_focused())
@@ -175,6 +177,7 @@ impl Theme {
     }
 
     // Built-in theme presets
+    #[allow(dead_code)]
     pub fn catppuccin_mocha() -> Self {
         Self {
             name: "catppuccin-mocha".to_string(),
@@ -191,6 +194,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn dracula() -> Self {
         Self {
             name: "dracula".to_string(),
@@ -207,6 +211,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn nord() -> Self {
         Self {
             name: "nord".to_string(),
@@ -223,6 +228,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn gruvbox() -> Self {
         Self {
             name: "gruvbox".to_string(),
@@ -239,6 +245,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn tokyo_night() -> Self {
         Self {
             name: "tokyo-night".to_string(),
@@ -255,6 +262,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_preset(name: &str) -> Option<Self> {
         match name.to_lowercase().as_str() {
             "default" => Some(Self::default()),

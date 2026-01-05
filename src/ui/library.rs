@@ -12,8 +12,9 @@ use crate::service::{Album, Artist, ServiceType, Track};
 use super::styles::{format_track_with_indicator, is_track_playing, service_badge};
 use super::theme::Theme;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum LibraryTab {
+    #[default]
     Tracks,
     Albums,
     Artists,

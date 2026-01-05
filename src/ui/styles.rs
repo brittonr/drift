@@ -17,6 +17,7 @@ pub fn service_badge(service: ServiceType) -> &'static str {
 }
 
 /// Get the color associated with a service
+#[allow(dead_code)]
 pub fn service_color(service: ServiceType) -> Color {
     match service {
         ServiceType::Tidal => Color::Cyan,
@@ -26,6 +27,7 @@ pub fn service_color(service: ServiceType) -> Color {
 }
 
 /// Determine the style for a track in a list
+#[allow(dead_code)]
 pub fn track_style(is_selected: bool, is_playing: bool) -> Style {
     match (is_selected, is_playing) {
         (true, true) => Style::default()

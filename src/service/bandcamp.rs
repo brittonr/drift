@@ -165,6 +165,7 @@ impl BandcampClient {
     }
 
     /// Parse a JSON value into an Album
+    #[allow(dead_code)]
     fn parse_album(json: &Value) -> Option<Album> {
         let url = json.get("webpage_url")?.as_str()?.to_string();
 

@@ -206,22 +206,26 @@ impl AlbumArtCache {
     }
 
     /// Check if graphics are supported
+    #[allow(dead_code)]
     pub fn is_supported(&self) -> bool {
         self.picker.is_some()
     }
 
     /// Clear the in-memory cache (keeps disk cache)
+    #[allow(dead_code)]
     pub fn clear_memory_cache(&mut self) {
         self.images.clear();
         self.current_protocol = None;
     }
 
     /// Get the size of the in-memory cache
+    #[allow(dead_code)]
     pub fn memory_cache_size(&self) -> usize {
         self.images.len()
     }
 
     /// Get a cached image if available (non-blocking, doesn't update LRU order)
+    #[allow(dead_code)]
     pub fn get_cached(&self, cover_id: &str, size: u32) -> Option<&DynamicImage> {
         let cache_key = format!("{}_{}", cover_id, size);
         self.images.peek(&cache_key)

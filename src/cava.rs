@@ -92,28 +92,21 @@ noise_reduction = 77
             let mut reader = stdout;
             let mut buffer = [0u8; 20];
 
-            loop {
-                // Cava outputs raw bytes continuously (20 bytes per frame)
-                match reader.read_exact(&mut buffer) {
-                    Ok(_) => {
-                        // Convert raw bytes (0-255) to bar heights (0-7 range)
-                        let values: Vec<u8> = buffer.iter()
-                            .map(|&b| {
-                                // Scale from 0-255 to 0-7
-                                (b / 32).min(7)
-                            })
-                            .collect();
+            // Cava outputs raw bytes continuously (20 bytes per frame)
+            while reader.read_exact(&mut buffer).is_ok() {
+                // Convert raw bytes (0-255) to bar heights (0-7 range)
+                let values: Vec<u8> = buffer.iter()
+                    .map(|&b| {
+                        // Scale from 0-255 to 0-7
+                        (b / 32).min(7)
+                    })
+                    .collect();
 
-                        if let Ok(mut bars) = bars_clone.lock() {
-                            *bars = values;
-                        }
-                    }
-                    Err(_) => {
-                        // Cava process ended or error occurred
-                        break;
-                    }
+                if let Ok(mut bars) = bars_clone.lock() {
+                    *bars = values;
                 }
             }
+            // Cava process ended or error occurred
         });
 
         self.process = Some(child);

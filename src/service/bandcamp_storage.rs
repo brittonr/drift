@@ -160,6 +160,7 @@ impl BandcampStorage {
     }
 
     /// Check if a track is in favorites
+    #[allow(dead_code)]
     pub fn is_favorite_track(&self, track_url: &str) -> bool {
         self.favorite_tracks.iter().any(|t| t.url == track_url)
     }
@@ -172,6 +173,7 @@ impl BandcampStorage {
     // === Favorite Albums ===
 
     /// Add an album to favorites
+    #[allow(dead_code)]
     pub fn add_favorite_album(&mut self, album: StoredAlbum) {
         if !self.favorite_albums.iter().any(|a| a.url == album.url) {
             self.favorite_albums.push(album);
@@ -179,6 +181,7 @@ impl BandcampStorage {
     }
 
     /// Remove an album from favorites by URL
+    #[allow(dead_code)]
     pub fn remove_favorite_album(&mut self, album_url: &str) -> bool {
         let len_before = self.favorite_albums.len();
         self.favorite_albums.retain(|a| a.url != album_url);
@@ -188,6 +191,7 @@ impl BandcampStorage {
     // === Favorite Artists ===
 
     /// Add an artist to favorites
+    #[allow(dead_code)]
     pub fn add_favorite_artist(&mut self, artist: StoredArtist) {
         if !self.favorite_artists.iter().any(|a| a.subdomain == artist.subdomain) {
             self.favorite_artists.push(artist);
@@ -195,6 +199,7 @@ impl BandcampStorage {
     }
 
     /// Remove an artist from favorites by subdomain
+    #[allow(dead_code)]
     pub fn remove_favorite_artist(&mut self, subdomain: &str) -> bool {
         let len_before = self.favorite_artists.len();
         self.favorite_artists.retain(|a| a.subdomain != subdomain);

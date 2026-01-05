@@ -14,6 +14,7 @@ pub enum DownloadStatus {
 }
 
 impl DownloadStatus {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -36,7 +37,9 @@ impl DownloadStatus {
     }
 }
 
+// DownloadRecord fields are populated but some (file_path, error_message) are for future use
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DownloadRecord {
     pub track_id: String,
     pub title: String,
@@ -90,7 +93,9 @@ impl From<&DownloadRecord> for Track {
     }
 }
 
+// SyncedPlaylist fields are stored but only playlist_id is currently used
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SyncedPlaylist {
     pub playlist_id: String,
     pub name: String,
@@ -233,6 +238,7 @@ impl DownloadDb {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn mark_paused(&self, track_id: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE downloads
@@ -247,14 +253,17 @@ impl DownloadDb {
         self.get_by_status("pending")
     }
 
+    #[allow(dead_code)]
     pub fn get_downloading(&self) -> Result<Vec<DownloadRecord>> {
         self.get_by_status("downloading")
     }
 
+    #[allow(dead_code)]
     pub fn get_completed(&self) -> Result<Vec<DownloadRecord>> {
         self.get_by_status("completed")
     }
 
+    #[allow(dead_code)]
     pub fn get_failed(&self) -> Result<Vec<DownloadRecord>> {
         self.get_by_status("failed")
     }
@@ -332,6 +341,7 @@ impl DownloadDb {
         Ok(records)
     }
 
+    #[allow(dead_code)]
     pub fn is_downloaded(&self, track_id: &str) -> bool {
         self.conn
             .query_row(
@@ -400,6 +410,7 @@ impl DownloadDb {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn clear_completed(&self) -> Result<Vec<String>> {
         // Get all file paths first
         let mut stmt = self.conn.prepare(
@@ -484,6 +495,7 @@ impl DownloadDb {
         Ok(playlists)
     }
 
+    #[allow(dead_code)]
     pub fn get_playlist_new_tracks(&self, playlist_id: &str, current_tracks: &[Track]) -> Result<Vec<Track>> {
         // Get track IDs we already have for this playlist
         let mut stmt = self.conn.prepare(
@@ -504,6 +516,7 @@ impl DownloadDb {
         Ok(new_tracks)
     }
 
+    #[allow(dead_code)]
     pub fn is_playlist_synced(&self, playlist_id: &str) -> bool {
         self.conn
             .query_row(
@@ -514,6 +527,7 @@ impl DownloadDb {
             .is_ok()
     }
 
+    #[allow(dead_code)]
     pub fn remove_synced_playlist(&self, playlist_id: &str) -> Result<()> {
         // Remove playlist tracks links (downloads remain)
         self.conn.execute(
@@ -530,6 +544,7 @@ impl DownloadDb {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn get_downloaded_track_ids(&self) -> Result<std::collections::HashSet<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT track_id FROM downloads WHERE status = 'completed'"

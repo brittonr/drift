@@ -13,7 +13,9 @@ use crate::service::{MusicService, Playlist, Track};
 
 const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 2;
 
+// DownloadEvent is prepared for future download progress notifications
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum DownloadEvent {
     Started { track_id: String, title: String },
     Progress { track_id: String, downloaded: u64, total: u64 },
@@ -23,6 +25,8 @@ pub enum DownloadEvent {
     PlaylistSynced { playlist_id: String, name: String, new_tracks: usize },
 }
 
+// DownloadManager provides async download infrastructure, currently accessed via DownloadDb directly
+#[allow(dead_code)]
 pub struct DownloadManager {
     db: DownloadDb,
     download_dir: PathBuf,
@@ -31,6 +35,7 @@ pub struct DownloadManager {
     is_paused: bool,
 }
 
+#[allow(dead_code)]
 impl DownloadManager {
     pub fn new() -> Result<(Self, mpsc::UnboundedReceiver<DownloadEvent>)> {
         Self::with_config(&DownloadsConfig::default())

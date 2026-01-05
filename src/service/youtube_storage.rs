@@ -140,6 +140,7 @@ impl YouTubeStorage {
     }
 
     /// Check if a track is in favorites
+    #[allow(dead_code)]
     pub fn is_favorite_track(&self, track_id: &str) -> bool {
         self.favorite_tracks.iter().any(|t| t.id == track_id)
     }
@@ -147,6 +148,7 @@ impl YouTubeStorage {
     // === Favorite Channels/Artists ===
 
     /// Add a channel to favorites
+    #[allow(dead_code)]
     pub fn add_favorite_channel(&mut self, channel: StoredChannel) {
         if !self.favorite_channels.iter().any(|c| c.id == channel.id) {
             self.favorite_channels.push(channel);
@@ -154,6 +156,7 @@ impl YouTubeStorage {
     }
 
     /// Remove a channel from favorites by ID
+    #[allow(dead_code)]
     pub fn remove_favorite_channel(&mut self, channel_id: &str) -> bool {
         let len_before = self.favorite_channels.len();
         self.favorite_channels.retain(|c| c.id != channel_id);
@@ -163,6 +166,7 @@ impl YouTubeStorage {
     // === Saved Playlists ===
 
     /// Add a saved YouTube playlist
+    #[allow(dead_code)]
     pub fn add_saved_playlist(&mut self, playlist: SavedPlaylist) {
         if !self.saved_playlists.iter().any(|p| p.id == playlist.id) {
             self.saved_playlists.push(playlist);

@@ -85,7 +85,9 @@ pub struct Track {
 }
 
 /// A playlist from any music service
+// Playlist fields are populated; description/service are for future filtering
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Playlist {
     pub id: String,
     pub title: String,
@@ -229,9 +231,11 @@ pub trait MusicService: Send + Sync {
     // === Cover Art ===
 
     /// Resolve cover art to a URL
+    #[allow(dead_code)]
     fn get_cover_url(&self, cover: &CoverArt, size: u32) -> Option<String>;
 
     /// Get cover URL from a legacy cover ID string (for backward compatibility)
+    #[allow(dead_code)]
     fn get_cover_url_from_id(&self, cover_id: &str, size: u32) -> Option<String> {
         self.get_cover_url(
             &CoverArt::ServiceId {

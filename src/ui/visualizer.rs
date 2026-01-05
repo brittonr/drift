@@ -9,6 +9,7 @@ use ratatui::{
 use crate::cava::CavaVisualizer;
 use super::theme::Theme;
 
+#[allow(dead_code)]
 pub fn render_visualizer(
     f: &mut Frame,
     visualizer: Option<&CavaVisualizer>,
@@ -19,18 +20,17 @@ pub fn render_visualizer(
     if let Some(viz) = visualizer {
         let bars = viz.draw_bars();
 
-        let mut lines = vec![];
-
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(bars, Style::default().fg(theme.primary())),
-        ]));
-
-        lines.push(Line::from(vec![
-            Span::styled("  Bass ", Style::default().fg(theme.text_disabled())),
-            Span::raw("                    "),
-            Span::styled("Treble", Style::default().fg(theme.text_disabled())),
-        ]));
+        let lines = vec![
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(bars, Style::default().fg(theme.primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  Bass ", Style::default().fg(theme.text_disabled())),
+                Span::raw("                    "),
+                Span::styled("Treble", Style::default().fg(theme.text_disabled())),
+            ]),
+        ];
 
         let visualizer_widget = Paragraph::new(lines)
             .alignment(Alignment::Center)
