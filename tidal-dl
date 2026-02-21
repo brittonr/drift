@@ -1,0 +1,497 @@
+#!/usr/bin/env nix-shell
+#!nix-shell -i python3 -p python3Packages.requests python3Packages.mutagen
+"""
+tidal-dl — Download your entire Tidal library at MAX (HI_RES_LOSSLESS) quality.
+
+Downloads:
+  - All favorite albums (full track listings)
+  - All favorite tracks (loose, into a _Favorites folder)
+  - All playlists (into _Playlists/<name>/)
+
+Files go to: ~/Music/Tidal/<Artist>/<Album>/<NN> - <Title>.<ext>
+Skips already-downloaded files. Tags everything with metadata.
+"""
+
+import base64
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+import requests
+from mutagen.flac import FLAC
+from mutagen.mp4 import MP4
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+CREDS_PATH = Path.home() / ".config" / "tidal-tui" / "credentials.json"
+OUTPUT_DIR = Path.home() / "Music" / "Tidal"
+CLIENT_ID = "dN2N95wCyEBTllu4"
+API_BASE = "https://api.tidal.com/v1"
+AUTH_URL = "https://auth.tidal.com/v1/oauth2/token"
+COUNTRY = "US"
+PAGE_SIZE = 100
+
+# Quality cascade — try best first, fall back
+QUALITY_CASCADE = ["HI_RES_LOSSLESS", "HI_RES", "LOSSLESS", "HIGH"]
+
+# Rate limiting
+REQUEST_DELAY = 0.3  # seconds between API calls
+DOWNLOAD_DELAY = 0.5  # seconds between track downloads
+
+# ── State ─────────────────────────────────────────────────────────────────────
+
+session = requests.Session()
+creds = {}
+stats = {"downloaded": 0, "skipped": 0, "failed": 0, "total_bytes": 0}
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def sanitize(name: str) -> str:
+    """Sanitize a string for use as a filename."""
+    name = re.sub(r'[<>:"/\\|?*]', "_", name)
+    name = name.strip(". ")
+    return name or "_"
+
+
+def fmt_bytes(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+
+def fmt_duration(secs: int) -> str:
+    m, s = divmod(secs, 60)
+    return f"{m}:{s:02d}"
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+def load_creds():
+    global creds
+    if not CREDS_PATH.exists():
+        print(f"✗ No credentials found at {CREDS_PATH}")
+        print("  Run drift first to authenticate with Tidal.")
+        sys.exit(1)
+    creds = json.loads(CREDS_PATH.read_text())
+    session.headers["Authorization"] = f"Bearer {creds['access_token']}"
+    print(f"✓ Loaded credentials (user_id: {creds['user_id']})")
+
+
+def save_creds():
+    CREDS_PATH.write_text(json.dumps(creds, indent=2))
+
+
+def refresh_token():
+    global creds
+    print("  ↻ Refreshing access token...")
+    resp = requests.post(AUTH_URL, data={
+        "grant_type": "refresh_token",
+        "refresh_token": creds["refresh_token"],
+        "client_id": CLIENT_ID,
+    })
+    if resp.status_code != 200:
+        print(f"✗ Token refresh failed: {resp.status_code} {resp.text}")
+        sys.exit(1)
+    data = resp.json()
+    creds["access_token"] = data["access_token"]
+    if "refresh_token" in data:
+        creds["refresh_token"] = data["refresh_token"]
+    session.headers["Authorization"] = f"Bearer {creds['access_token']}"
+    save_creds()
+    print("  ✓ Token refreshed")
+
+
+# ── API ───────────────────────────────────────────────────────────────────────
+
+def api_get(path: str, params: dict = None, retry=True) -> dict:
+    """Make an authenticated GET request to the Tidal API."""
+    url = f"{API_BASE}/{path}" if not path.startswith("http") else path
+    base_params = {"countryCode": COUNTRY}
+    if params:
+        base_params.update(params)
+
+    time.sleep(REQUEST_DELAY)
+    resp = session.get(url, params=base_params)
+
+    if resp.status_code == 401 and retry:
+        refresh_token()
+        return api_get(path, params, retry=False)
+
+    if not resp.ok:
+        print(f"  ✗ API error: {resp.status_code} {path}")
+        return {}
+
+    return resp.json()
+
+
+def paginate(path: str, key: str = "items", params: dict = None) -> list:
+    """Fetch all pages of a paginated endpoint."""
+    all_items = []
+    offset = 0
+    while True:
+        p = {"limit": str(PAGE_SIZE), "offset": str(offset)}
+        if params:
+            p.update(params)
+        data = api_get(path, p)
+        items = data.get(key, [])
+        if not items:
+            break
+        all_items.extend(items)
+        total = data.get("totalNumberOfItems", len(all_items))
+        if len(all_items) >= total:
+            break
+        offset += PAGE_SIZE
+    return all_items
+
+
+# ── Library Fetch ─────────────────────────────────────────────────────────────
+
+def get_favorite_albums() -> list:
+    """Fetch all favorite albums."""
+    items = paginate(f"users/{creds['user_id']}/favorites/albums")
+    albums = []
+    for item in items:
+        album = item.get("item", item)
+        artist = album.get("artist", {}).get("name") or album.get("artists", [{}])[0].get("name", "Unknown Artist")
+        albums.append({
+            "id": album["id"],
+            "title": album.get("title", "Unknown Album"),
+            "artist": artist,
+            "num_tracks": album.get("numberOfTracks", 0),
+            "cover": album.get("cover"),
+        })
+    return albums
+
+
+def get_favorite_tracks() -> list:
+    """Fetch all favorite tracks."""
+    items = paginate(f"users/{creds['user_id']}/favorites/tracks")
+    return [parse_track(item.get("item", item)) for item in items if parse_track(item.get("item", item))]
+
+
+def get_playlists() -> list:
+    """Fetch all user playlists."""
+    items = paginate(f"users/{creds['user_id']}/playlists")
+    return [{
+        "id": p.get("uuid", p.get("id")),
+        "title": p.get("title", "Untitled"),
+        "num_tracks": p.get("numberOfTracks", 0),
+    } for p in items]
+
+
+def get_album_tracks(album_id) -> list:
+    """Fetch all tracks in an album."""
+    items = paginate(f"albums/{album_id}/items")
+    tracks = []
+    for item in items:
+        track = parse_track(item.get("item", item))
+        if track:
+            tracks.append(track)
+    return tracks
+
+
+def get_playlist_tracks(playlist_id: str) -> list:
+    """Fetch all tracks in a playlist."""
+    items = paginate(f"playlists/{playlist_id}/items")
+    tracks = []
+    for item in items:
+        track = parse_track(item.get("item", item))
+        if track:
+            tracks.append(track)
+    return tracks
+
+
+def parse_track(data: dict) -> dict | None:
+    """Parse a track object from the API."""
+    if not data or "id" not in data:
+        return None
+    artist = (
+        data.get("artist", {}).get("name")
+        or (data.get("artists", [{}])[0].get("name") if data.get("artists") else None)
+        or "Unknown Artist"
+    )
+    album = data.get("album", {})
+    return {
+        "id": data["id"],
+        "title": data.get("title", "Unknown"),
+        "artist": artist,
+        "album": album.get("title", "Unknown Album"),
+        "album_artist": album.get("artist", {}).get("name", artist),
+        "duration": data.get("duration", 0),
+        "track_number": data.get("trackNumber", 0),
+        "volume_number": data.get("volumeNumber", 1),
+        "cover": album.get("cover"),
+    }
+
+
+# ── Download ──────────────────────────────────────────────────────────────────
+
+def get_stream_url(track_id: int) -> tuple[str, str]:
+    """
+    Get the stream URL for a track at the highest available quality.
+    Returns (url, codec) tuple.
+    """
+    for quality in QUALITY_CASCADE:
+        data = api_get(f"tracks/{track_id}/playbackinfo", {
+            "audioquality": quality,
+            "assetpresentation": "FULL",
+            "playbackmode": "STREAM",
+        })
+
+        if not data:
+            continue
+
+        codec = data.get("audioQuality", quality)
+        manifest_mime = data.get("manifestMimeType", "")
+        manifest_b64 = data.get("manifest", "")
+
+        if not manifest_b64:
+            # Try direct URL field
+            url = data.get("url")
+            if url:
+                return url, codec
+            continue
+
+        # Decode manifest
+        try:
+            manifest_str = base64.b64decode(manifest_b64).decode("utf-8")
+        except Exception:
+            continue
+
+        if "application/dash+xml" in manifest_mime:
+            # DASH manifest — extract URL from XML
+            import re as _re
+            urls = _re.findall(r'<BaseURL>(.*?)</BaseURL>', manifest_str)
+            if urls:
+                return urls[0], codec
+        else:
+            # JSON manifest
+            try:
+                manifest = json.loads(manifest_str)
+                urls = manifest.get("urls", [])
+                if urls:
+                    return urls[0], codec
+            except json.JSONDecodeError:
+                continue
+
+    raise RuntimeError(f"No stream URL found for track {track_id}")
+
+
+def file_extension(codec: str) -> str:
+    """Determine file extension from codec/quality info."""
+    codec_lower = codec.lower()
+    if "flac" in codec_lower or "lossless" in codec_lower or "hi_res" in codec_lower:
+        return "flac"
+    if "aac" in codec_lower or "mp4" in codec_lower:
+        return "m4a"
+    if "mp3" in codec_lower:
+        return "mp3"
+    # Default to FLAC for high quality
+    return "flac"
+
+
+def download_track(track: dict, dest_dir: Path, index: int = 0, total: int = 0) -> bool:
+    """
+    Download a single track. Returns True if downloaded, False if skipped.
+    """
+    track_num = track.get("track_number", index)
+    title = sanitize(track["title"])
+    artist = sanitize(track["artist"])
+
+    # Check for existing files with any extension
+    prefix = f"{track_num:02d} - {title}"
+    for ext in ("flac", "m4a", "mp3"):
+        if (dest_dir / f"{prefix}.{ext}").exists():
+            stats["skipped"] += 1
+            return False
+
+    # Get stream URL
+    try:
+        url, codec = get_stream_url(track["id"])
+    except RuntimeError as e:
+        print(f"    ✗ {prefix}: {e}")
+        stats["failed"] += 1
+        return False
+
+    ext = file_extension(codec)
+    dest = dest_dir / f"{prefix}.{ext}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # Download
+    progress_label = f"[{index}/{total}]" if total else ""
+    print(f"    ↓ {progress_label} {track['artist']} - {track['title']} [{codec}]")
+
+    try:
+        time.sleep(DOWNLOAD_DELAY)
+        resp = session.get(url, stream=True, timeout=120)
+        resp.raise_for_status()
+
+        total_size = int(resp.headers.get("content-length", 0))
+        downloaded = 0
+
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                f.write(chunk)
+                downloaded += len(chunk)
+
+        stats["downloaded"] += 1
+        stats["total_bytes"] += downloaded
+
+        # Tag the file
+        tag_file(dest, track, ext)
+
+        return True
+
+    except Exception as e:
+        print(f"    ✗ Download failed: {e}")
+        if dest.exists():
+            dest.unlink()
+        stats["failed"] += 1
+        return False
+
+
+def tag_file(path: Path, track: dict, ext: str):
+    """Write metadata tags to the downloaded file."""
+    try:
+        if ext == "flac":
+            audio = FLAC(str(path))
+            audio["TITLE"] = track["title"]
+            audio["ARTIST"] = track["artist"]
+            audio["ALBUM"] = track["album"]
+            audio["ALBUMARTIST"] = track.get("album_artist", track["artist"])
+            if track.get("track_number"):
+                audio["TRACKNUMBER"] = str(track["track_number"])
+            if track.get("volume_number"):
+                audio["DISCNUMBER"] = str(track["volume_number"])
+            audio.save()
+
+        elif ext == "m4a":
+            audio = MP4(str(path))
+            audio["\xa9nam"] = [track["title"]]
+            audio["\xa9ART"] = [track["artist"]]
+            audio["\xa9alb"] = [track["album"]]
+            audio["aART"] = [track.get("album_artist", track["artist"])]
+            if track.get("track_number"):
+                audio["trkn"] = [(track["track_number"], 0)]
+            if track.get("volume_number"):
+                audio["disk"] = [(track["volume_number"], 0)]
+            audio.save()
+
+    except Exception as e:
+        print(f"    ⚠ Tagging failed: {e}")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def download_albums(albums: list):
+    """Download all tracks from a list of albums."""
+    for i, album in enumerate(albums, 1):
+        artist_dir = sanitize(album["artist"])
+        album_dir = sanitize(album["title"])
+        dest = OUTPUT_DIR / artist_dir / album_dir
+
+        print(f"\n  [{i}/{len(albums)}] {album['artist']} — {album['title']} ({album['num_tracks']} tracks)")
+
+        tracks = get_album_tracks(album["id"])
+        if not tracks:
+            print("    ⚠ No tracks found")
+            continue
+
+        new = 0
+        for j, track in enumerate(tracks, 1):
+            if download_track(track, dest, index=j, total=len(tracks)):
+                new += 1
+
+        if new == 0:
+            print("    ✓ Already complete")
+
+
+def download_loose_tracks(tracks: list, dest: Path, label: str = "Favorites"):
+    """Download a list of tracks into a flat directory."""
+    if not tracks:
+        return
+
+    print(f"\n  {label} ({len(tracks)} tracks)")
+
+    for i, track in enumerate(tracks, 1):
+        # For loose tracks, use artist subdirectories
+        track_dest = dest / sanitize(track["artist"])
+        download_track(track, track_dest, index=i, total=len(tracks))
+
+
+def download_playlists(playlists: list):
+    """Download all playlists."""
+    for i, pl in enumerate(playlists, 1):
+        dest = OUTPUT_DIR / "_Playlists" / sanitize(pl["title"])
+        print(f"\n  [{i}/{len(playlists)}] Playlist: {pl['title']} ({pl['num_tracks']} tracks)")
+
+        tracks = get_playlist_tracks(pl["id"])
+        if not tracks:
+            print("    ⚠ No tracks found")
+            continue
+
+        for j, track in enumerate(tracks, 1):
+            download_track(track, dest, index=j, total=len(tracks))
+
+
+def main():
+    print("╔══════════════════════════════════════════╗")
+    print("║   tidal-dl — MAX quality library dump    ║")
+    print("╚══════════════════════════════════════════╝")
+    print()
+
+    load_creds()
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"✓ Output directory: {OUTPUT_DIR}")
+
+    start_time = time.time()
+
+    # ── Fetch library ─────────────────────────────────────────────────────
+    print("\n━━━ Fetching library ━━━")
+
+    print("  Fetching favorite albums...", end=" ", flush=True)
+    albums = get_favorite_albums()
+    print(f"{len(albums)} albums")
+
+    print("  Fetching favorite tracks...", end=" ", flush=True)
+    fav_tracks = get_favorite_tracks()
+    print(f"{len(fav_tracks)} tracks")
+
+    print("  Fetching playlists...", end=" ", flush=True)
+    playlists = get_playlists()
+    print(f"{len(playlists)} playlists")
+
+    total_tracks = sum(a["num_tracks"] for a in albums) + len(fav_tracks) + sum(p["num_tracks"] for p in playlists)
+    print(f"\n  Total: ~{total_tracks} tracks to process")
+
+    # ── Download ──────────────────────────────────────────────────────────
+    print("\n━━━ Downloading albums ━━━")
+    download_albums(albums)
+
+    print("\n━━━ Downloading favorite tracks ━━━")
+    download_loose_tracks(fav_tracks, OUTPUT_DIR / "_Favorites", "Favorite Tracks")
+
+    print("\n━━━ Downloading playlists ━━━")
+    download_playlists(playlists)
+
+    # ── Summary ───────────────────────────────────────────────────────────
+    elapsed = time.time() - start_time
+    mins, secs = divmod(int(elapsed), 60)
+
+    print("\n━━━ Done ━━━")
+    print(f"  Downloaded: {stats['downloaded']} tracks ({fmt_bytes(stats['total_bytes'])})")
+    print(f"  Skipped:    {stats['skipped']} (already existed)")
+    print(f"  Failed:     {stats['failed']}")
+    print(f"  Time:       {mins}m {secs}s")
+    print(f"  Location:   {OUTPUT_DIR}")
+
+
+if __name__ == "__main__":
+    main()
