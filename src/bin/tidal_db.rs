@@ -51,6 +51,9 @@ fn handle(db: &TidalDb, cmd: &Value) -> Value {
         Some("put") => cmd_put(db, cmd),
         Some("check_album") => cmd_check_album(db, cmd),
         Some("mark_album") => cmd_mark_album(db, cmd),
+        Some("check_unavailable") => cmd_check_unavailable(db, cmd),
+        Some("check_unavailable_batch") => cmd_check_unavailable_batch(db, cmd),
+        Some("mark_unavailable") => cmd_mark_unavailable(db, cmd),
         Some("stats") => cmd_stats(db),
         Some("import") => cmd_import(db, cmd),
         Some("prune") => cmd_prune(db),
@@ -115,11 +118,37 @@ fn cmd_mark_album(db: &TidalDb, cmd: &Value) -> Value {
     }
 }
 
-fn cmd_stats(db: &TidalDb) -> Value {
-    match db.track_count() {
-        Ok(count) => json!({"count": count}),
+fn cmd_check_unavailable(db: &TidalDb, cmd: &Value) -> Value {
+    let track_id = cmd["track_id"].as_str().unwrap_or("");
+    match db.is_unavailable(track_id) {
+        Ok(unavail) => json!({"unavailable": unavail}),
         Err(e) => json!({"error": e.to_string()}),
     }
+}
+
+fn cmd_check_unavailable_batch(db: &TidalDb, cmd: &Value) -> Value {
+    let track_ids: Vec<&str> = cmd["track_ids"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    match db.check_unavailable_batch(&track_ids) {
+        Ok(found) => json!({"unavailable": found}),
+        Err(e) => json!({"error": e.to_string()}),
+    }
+}
+
+fn cmd_mark_unavailable(db: &TidalDb, cmd: &Value) -> Value {
+    let track_id = cmd["track_id"].as_str().unwrap_or("");
+    match db.mark_unavailable(track_id) {
+        Ok(()) => json!({"ok": true}),
+        Err(e) => json!({"error": e.to_string()}),
+    }
+}
+
+fn cmd_stats(db: &TidalDb) -> Value {
+    let count = db.track_count().unwrap_or(0);
+    let unavailable = db.unavailable_count().unwrap_or(0);
+    json!({"count": count, "unavailable": unavailable})
 }
 
 fn cmd_import(db: &TidalDb, cmd: &Value) -> Value {

@@ -22,6 +22,10 @@ import sys
 import time
 from pathlib import Path
 
+# Force line-buffered stdout/stderr so output appears immediately when piped
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 import blake3
 import requests
 from mutagen.flac import FLAC
@@ -44,6 +48,11 @@ QUALITY_CASCADE = ["HI_RES_LOSSLESS", "HI_RES", "LOSSLESS", "HIGH"]
 # Rate limiting
 REQUEST_DELAY = 0.3  # seconds between API calls
 DOWNLOAD_DELAY = 0.5  # seconds between track downloads
+
+# Retry on 403 (rate limiting)
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF = [5, 15, 30]  # seconds to wait between retries
+MAX_RETRY_AFTER = 60  # cap Retry-After header to 60s
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -137,6 +146,19 @@ class TidalDb:
         """Mark an album as fully downloaded."""
         return self._cmd({"cmd": "mark_album", "album_id": str(album_id)})
 
+    def is_unavailable(self, track_id: str) -> bool:
+        """Check if a track is marked unavailable (within 7-day TTL)."""
+        return self._cmd({"cmd": "check_unavailable", "track_id": str(track_id)}).get("unavailable", False)
+
+    def check_unavailable_batch(self, track_ids: list[str]) -> set[str]:
+        """Batch check unavailable track IDs. Returns set of unavailable IDs."""
+        result = self._cmd({"cmd": "check_unavailable_batch", "track_ids": [str(t) for t in track_ids]})
+        return set(result.get("unavailable", []))
+
+    def mark_unavailable(self, track_id: str):
+        """Mark a track as unavailable (403 after retries)."""
+        return self._cmd({"cmd": "mark_unavailable", "track_id": str(track_id)})
+
     def check_hash(self, blake3_hash: str) -> dict:
         return self._cmd({"cmd": "check_hash", "hash": blake3_hash})
 
@@ -198,7 +220,7 @@ def refresh_token():
         "grant_type": "refresh_token",
         "refresh_token": creds["refresh_token"],
         "client_id": CLIENT_ID,
-    })
+    }, timeout=(10, 30))
     if resp.status_code != 200:
         print(f"✗ Token refresh failed: {resp.status_code} {resp.text}")
         sys.exit(1)
@@ -213,6 +235,16 @@ def refresh_token():
 
 # ── API ───────────────────────────────────────────────────────────────────────
 
+class ForbiddenError(Exception):
+    """Raised on 403 — track is region-locked or delisted."""
+    pass
+
+
+class ServerError(Exception):
+    """Raised on 5xx — Tidal server error, not quality-dependent."""
+    pass
+
+
 def api_get(path: str, params: dict = None, retry=True) -> dict:
     """Make an authenticated GET request to the Tidal API."""
     url = f"{API_BASE}/{path}" if not path.startswith("http") else path
@@ -220,18 +252,65 @@ def api_get(path: str, params: dict = None, retry=True) -> dict:
     if params:
         base_params.update(params)
 
-    time.sleep(REQUEST_DELAY)
-    resp = session.get(url, params=base_params)
+    for attempt in range(RETRY_ATTEMPTS + 1):
+        time.sleep(REQUEST_DELAY)
+        try:
+            resp = session.get(url, params=base_params, timeout=(10, 30))
+        except requests.exceptions.Timeout:
+            if attempt < RETRY_ATTEMPTS:
+                wait = RETRY_BACKOFF[attempt]
+                print(f"  ⏳ Timeout on {path} — retrying in {wait}s ({attempt + 1}/{RETRY_ATTEMPTS})")
+                time.sleep(wait)
+                continue
+            print(f"  ✗ Timeout on {path} after {RETRY_ATTEMPTS} retries")
+            return {}
+        except requests.exceptions.RequestException as e:
+            if attempt < RETRY_ATTEMPTS:
+                wait = RETRY_BACKOFF[attempt]
+                print(f"  ⏳ {type(e).__name__} on {path} — retrying in {wait}s")
+                time.sleep(wait)
+                continue
+            print(f"  ✗ {type(e).__name__} on {path} after {RETRY_ATTEMPTS} retries: {e}")
+            return {}
 
-    if resp.status_code == 401 and retry:
-        refresh_token()
-        return api_get(path, params, retry=False)
+        if resp.status_code == 401 and retry:
+            refresh_token()
+            return api_get(path, params, retry=False)
 
-    if not resp.ok:
-        print(f"  ✗ API error: {resp.status_code} {path}")
-        return {}
+        if resp.status_code == 429:
+            raw_wait = resp.headers.get("Retry-After", RETRY_BACKOFF[min(attempt, len(RETRY_BACKOFF) - 1)])
+            wait = min(int(raw_wait), MAX_RETRY_AFTER)
+            print(f"  ⏳ Rate limited — waiting {wait}s ({attempt + 1}/{RETRY_ATTEMPTS})")
+            time.sleep(wait)
+            continue
 
-    return resp.json()
+        if resp.status_code == 403:
+            raise ForbiddenError(f"403 Forbidden: {path}")
+
+        if resp.status_code >= 500:
+            if attempt < RETRY_ATTEMPTS:
+                wait = RETRY_BACKOFF[attempt]
+                print(f"  ✗ API error: {resp.status_code} {path} — retrying in {wait}s")
+                time.sleep(wait)
+                continue
+            raise ServerError(f"{resp.status_code} Server Error: {path}")
+
+        if not resp.ok:
+            print(f"  ✗ API error: {resp.status_code} {path}")
+            return {}
+
+        try:
+            return resp.json()
+        except (json.JSONDecodeError, ValueError):
+            if attempt < RETRY_ATTEMPTS:
+                print(f"  ⏳ Empty response from {path} — retrying")
+                time.sleep(RETRY_BACKOFF[attempt])
+                continue
+            print(f"  ✗ Empty/invalid JSON from {path}")
+            return {}
+
+    print(f"  ✗ Failed {path} after {RETRY_ATTEMPTS} retries")
+    return {}
 
 
 def paginate(path: str, key: str = "items", params: dict = None) -> list:
@@ -242,7 +321,11 @@ def paginate(path: str, key: str = "items", params: dict = None) -> list:
         p = {"limit": str(PAGE_SIZE), "offset": str(offset)}
         if params:
             p.update(params)
-        data = api_get(path, p)
+        try:
+            data = api_get(path, p)
+        except ServerError:
+            print(f"\n  ✗ Server error during pagination of {path}, returning {len(all_items)} items so far")
+            break
         items = data.get(key, [])
         if not items:
             break
@@ -339,50 +422,67 @@ def parse_track(data: dict) -> dict | None:
 def get_stream_url(track_id: int) -> tuple[str, str]:
     """
     Get the stream URL for a track at the highest available quality.
-    Returns (url, codec) tuple.
+    Returns (url, codec) tuple. Retries with backoff on 403 (rate limiting).
     """
-    for quality in QUALITY_CASCADE:
-        data = api_get(f"tracks/{track_id}/playbackinfo", {
-            "audioquality": quality,
-            "assetpresentation": "FULL",
-            "playbackmode": "STREAM",
-        })
-
-        if not data:
-            continue
-
-        codec = data.get("audioQuality", quality)
-        manifest_mime = data.get("manifestMimeType", "")
-        manifest_b64 = data.get("manifest", "")
-
-        if not manifest_b64:
-            # Try direct URL field
-            url = data.get("url")
-            if url:
-                return url, codec
-            continue
-
-        # Decode manifest
-        try:
-            manifest_str = base64.b64decode(manifest_b64).decode("utf-8")
-        except Exception:
-            continue
-
-        if "application/dash+xml" in manifest_mime:
-            # DASH manifest — extract URL from XML
-            import re as _re
-            urls = _re.findall(r'<BaseURL>(.*?)</BaseURL>', manifest_str)
-            if urls:
-                return urls[0], codec
-        else:
-            # JSON manifest
+    for attempt in range(RETRY_ATTEMPTS + 1):
+        for quality in QUALITY_CASCADE:
             try:
-                manifest = json.loads(manifest_str)
-                urls = manifest.get("urls", [])
+                data = api_get(f"tracks/{track_id}/playbackinfo", {
+                    "audioquality": quality,
+                    "assetpresentation": "FULL",
+                    "playbackmode": "STREAM",
+                })
+            except ForbiddenError:
+                # 403 on first quality = likely rate limit or unavailable.
+                # Don't try lower qualities (403 isn't quality-dependent).
+                if attempt < RETRY_ATTEMPTS:
+                    wait = RETRY_BACKOFF[attempt]
+                    print(f"    ⏳ 403 — backing off {wait}s (attempt {attempt + 1}/{RETRY_ATTEMPTS})")
+                    time.sleep(wait)
+                    break  # break inner loop, retry from top quality
+                raise RuntimeError(f"Track {track_id} unavailable (403 after {RETRY_ATTEMPTS} retries)")
+            except ServerError:
+                # 5xx is not quality-dependent — server is broken for this track
+                raise RuntimeError(f"Track {track_id} unavailable (server error after retries)")
+
+            if not data:
+                continue
+
+            codec = data.get("audioQuality", quality)
+            manifest_mime = data.get("manifestMimeType", "")
+            manifest_b64 = data.get("manifest", "")
+
+            if not manifest_b64:
+                # Try direct URL field
+                url = data.get("url")
+                if url:
+                    return url, codec
+                continue
+
+            # Decode manifest
+            try:
+                manifest_str = base64.b64decode(manifest_b64).decode("utf-8")
+            except Exception:
+                continue
+
+            if "application/dash+xml" in manifest_mime:
+                # DASH manifest — extract URL from XML
+                import re as _re
+                urls = _re.findall(r'<BaseURL>(.*?)</BaseURL>', manifest_str)
                 if urls:
                     return urls[0], codec
-            except json.JSONDecodeError:
-                continue
+            else:
+                # JSON manifest
+                try:
+                    manifest = json.loads(manifest_str)
+                    urls = manifest.get("urls", [])
+                    if urls:
+                        return urls[0], codec
+                except json.JSONDecodeError:
+                    continue
+        else:
+            # Inner loop completed without break (no 403) — all qualities exhausted
+            break
 
     raise RuntimeError(f"No stream URL found for track {track_id}")
 
@@ -401,12 +501,14 @@ def file_extension(codec: str) -> str:
 
 
 def download_track(track: dict, dest_dir: Path, index: int = 0, total: int = 0,
-                   use_index_as_num: bool = False, known_ids: set = None) -> bool:
+                   use_index_as_num: bool = False, known_ids: set = None,
+                   unavailable_ids: set = None) -> bool:
     """
     Download a single track. Returns True if downloaded, False if skipped.
     Deduplicates by track ID (pre-download) and BLAKE3 content hash (post-download)
     across all directories (albums, favorites, playlists).
     Pass known_ids (from check_batch) to skip individual db lookups.
+    Pass unavailable_ids (from check_unavailable_batch) to skip known-403 tracks.
     """
     track_id = str(track["id"])
 
@@ -428,6 +530,17 @@ def download_track(track: dict, dest_dir: Path, index: int = 0, total: int = 0,
             seen_this_run.add(track_id)
             return False
 
+    # Skip tracks known to be unavailable (403, cached for 7 days)
+    if unavailable_ids is not None:
+        if track_id in unavailable_ids:
+            stats["skipped"] += 1
+            seen_this_run.add(track_id)
+            return False
+    elif db.is_unavailable(track_id):
+        stats["skipped"] += 1
+        seen_this_run.add(track_id)
+        return False
+
     track_num = index if use_index_as_num else track.get("track_number", index)
     title = sanitize(track["title"])
     artist = sanitize(track["artist"])
@@ -448,7 +561,11 @@ def download_track(track: dict, dest_dir: Path, index: int = 0, total: int = 0,
     try:
         url, codec = get_stream_url(track["id"])
     except RuntimeError as e:
-        print(f"    ✗ {prefix}: {e}")
+        err_msg = str(e)
+        print(f"    ✗ {prefix}: {err_msg}")
+        # Cache unavailable tracks (403, 500, etc.) so we don't retry for 7 days
+        db.mark_unavailable(track_id)
+        seen_this_run.add(track_id)
         stats["failed"] += 1
         return False
 
@@ -552,23 +669,29 @@ def download_albums(albums: list):
         # Album-level cache — skip API call entirely if we know it's complete
         if db.check_album(album["id"]):
             cached += 1
+            # Show progress every 500 cached albums
+            if cached % 500 == 0:
+                print(f"  ... {cached} albums skipped (cached), at [{i}/{len(albums)}]")
             continue
 
         print(f"\n  [{i}/{len(albums)}] {album['artist']} — {album['title']} ({album['num_tracks']} tracks)")
 
         tracks = get_album_tracks(album["id"])
         if not tracks:
-            print("    ⚠ No tracks found")
+            print("    ⚠ No tracks found (delisted?) — caching to skip next run")
+            db.mark_album(album["id"])
             continue
 
         # Batch check all track IDs in one IPC call
         track_ids = [str(t["id"]) for t in tracks]
         known = db.check_batch(track_ids)
+        unavail = db.check_unavailable_batch(track_ids)
 
         failed_before = stats["failed"]
         new = 0
         for j, track in enumerate(tracks, 1):
-            if download_track(track, dest, index=j, total=len(tracks), known_ids=known):
+            if download_track(track, dest, index=j, total=len(tracks),
+                              known_ids=known, unavailable_ids=unavail):
                 new += 1
 
         album_failed = stats["failed"] - failed_before
@@ -591,9 +714,15 @@ def download_loose_tracks(tracks: list, dest: Path, label: str = "Favorites"):
     # Batch check all track IDs up front
     track_ids = [str(t["id"]) for t in tracks]
     known = db.check_batch(track_ids)
-    new_count = len(track_ids) - len(known & set(track_ids))
+    unavail = db.check_unavailable_batch(track_ids)
+    already = known | unavail
+    new_count = len(set(track_ids) - already)
 
-    print(f"\n  {label} ({len(tracks)} tracks, {new_count} new)")
+    print(f"\n  {label} ({len(tracks)} tracks, {new_count} new", end="")
+    if unavail:
+        print(f", {len(unavail & set(track_ids))} unavailable", end="")
+    print(")")
+
     if new_count == 0:
         print("    ✓ All tracks already downloaded")
         for tid in track_ids:
@@ -605,7 +734,7 @@ def download_loose_tracks(tracks: list, dest: Path, label: str = "Favorites"):
         # For loose tracks, use artist subdirectories and sequential numbering
         track_dest = dest / sanitize(track["artist"])
         download_track(track, track_dest, index=i, total=len(tracks),
-                       use_index_as_num=True, known_ids=known)
+                       use_index_as_num=True, known_ids=known, unavailable_ids=unavail)
 
 
 def download_playlists(playlists: list):
@@ -622,10 +751,11 @@ def download_playlists(playlists: list):
         # Batch check all track IDs
         track_ids = [str(t["id"]) for t in tracks]
         known = db.check_batch(track_ids)
+        unavail = db.check_unavailable_batch(track_ids)
 
         for j, track in enumerate(tracks, 1):
             download_track(track, dest, index=j, total=len(tracks),
-                           use_index_as_num=True, known_ids=known)
+                           use_index_as_num=True, known_ids=known, unavailable_ids=unavail)
 
 
 def main():
@@ -666,7 +796,11 @@ def main():
         print(f"  ✓ Old history backed up to {backup.name}")
 
     result = db.stats()
-    print(f"  ✓ Download history: {result.get('count', 0)} tracks in redb")
+    unavail_count = result.get('unavailable', 0)
+    print(f"  ✓ Download history: {result.get('count', 0)} tracks in redb", end="")
+    if unavail_count:
+        print(f", {unavail_count} marked unavailable", end="")
+    print()
 
     start_time = time.time()
 
@@ -677,9 +811,15 @@ def main():
     albums = get_favorite_albums()
     print(f"{len(albums)} albums")
 
+    # Proactive refresh — album pagination may have burned through rate limits
+    refresh_token()
+
     print("  Fetching favorite tracks...", end=" ", flush=True)
     fav_tracks = get_favorite_tracks()
     print(f"{len(fav_tracks)} tracks")
+
+    # Proactive refresh again before playlists
+    refresh_token()
 
     print("  Fetching playlists...", end=" ", flush=True)
     playlists = get_playlists()
@@ -693,9 +833,11 @@ def main():
     download_albums(albums)
 
     print("\n━━━ Downloading favorite tracks ━━━")
+    refresh_token()  # proactive refresh — albums may have taken hours
     download_loose_tracks(fav_tracks, OUTPUT_DIR / "_Favorites", "Favorite Tracks")
 
     print("\n━━━ Downloading playlists ━━━")
+    refresh_token()
     download_playlists(playlists)
 
     # ── Summary ───────────────────────────────────────────────────────────

@@ -35,7 +35,23 @@ impl App {
                     None
                 }
             }
-            ViewMode::Downloads | ViewMode::ArtistDetail | ViewMode::AlbumDetail => None,
+            ViewMode::AlbumDetail => {
+                if self.album_detail.selected_track < self.album_detail.tracks.len() {
+                    Some(self.album_detail.tracks[self.album_detail.selected_track].clone())
+                } else {
+                    None
+                }
+            }
+            ViewMode::ArtistDetail => {
+                if self.artist_detail.selected_panel == 0
+                    && self.artist_detail.selected_track < self.artist_detail.top_tracks.len()
+                {
+                    Some(self.artist_detail.top_tracks[self.artist_detail.selected_track].clone())
+                } else {
+                    None
+                }
+            }
+            ViewMode::Downloads => None,
         };
 
         if let Some(track) = track {
@@ -74,7 +90,15 @@ impl App {
                     Vec::new()
                 }
             }
-            ViewMode::Downloads | ViewMode::ArtistDetail | ViewMode::AlbumDetail => Vec::new(),
+            ViewMode::AlbumDetail => self.album_detail.tracks.clone(),
+            ViewMode::ArtistDetail => {
+                if self.artist_detail.selected_panel == 0 {
+                    self.artist_detail.top_tracks.clone()
+                } else {
+                    Vec::new()
+                }
+            }
+            ViewMode::Downloads => Vec::new(),
         };
 
         if !tracks.is_empty() {

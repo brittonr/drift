@@ -2,9 +2,10 @@
 //!
 //! Shared library used by both the TUI (direct reads) and the tidal-dl
 //! co-process binary (reads + writes). Two indices:
-//!   tracks:  track_id    → {hash, path, artist, title}
-//!   hashes:  blake3_hash → track_id
-//!   albums:  album_id    → "complete"
+//!   tracks:       track_id    → {hash, path, artist, title}
+//!   hashes:       blake3_hash → track_id
+//!   albums:       album_id    → "complete"
+//!   unavailable:  track_id    → unix timestamp (when we gave up)
 //!
 //! The TUI only needs read access — it checks whether a track has already
 //! been downloaded by tidal-dl and where the file lives on disk.
@@ -20,6 +21,11 @@ pub const TRACKS: TableDefinition<&str, &[u8]> = TableDefinition::new("tracks");
 pub const HASHES: TableDefinition<&str, &str> = TableDefinition::new("hashes");
 #[allow(dead_code)]
 pub const ALBUMS: TableDefinition<&str, &str> = TableDefinition::new("albums");
+#[allow(dead_code)]
+pub const UNAVAILABLE: TableDefinition<&str, u64> = TableDefinition::new("unavailable");
+
+/// How long to cache an "unavailable" verdict before retrying (7 days).
+pub const UNAVAILABLE_TTL_SECS: u64 = 7 * 24 * 3600;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackRecord {
@@ -58,6 +64,7 @@ impl TidalDb {
             txn.open_table(TRACKS)?;
             txn.open_table(HASHES)?;
             txn.open_table(ALBUMS)?;
+            txn.open_table(UNAVAILABLE)?;
             txn.commit()?;
         }
         Ok(Self { db })
@@ -175,6 +182,78 @@ impl TidalDb {
         }
         txn.commit()?;
         Ok(())
+    }
+
+    /// Check if a track is marked unavailable (and the TTL hasn't expired).
+    pub fn is_unavailable(&self, track_id: &str) -> Result<bool> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(UNAVAILABLE)?;
+        match table.get(track_id)? {
+            Some(ts) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                Ok(now - ts.value() < UNAVAILABLE_TTL_SECS)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Batch check unavailable track IDs. Returns the set that are still
+    /// within the TTL window.
+    pub fn check_unavailable_batch(
+        &self,
+        track_ids: &[&str],
+    ) -> Result<std::collections::HashSet<String>> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(UNAVAILABLE)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut unavail = std::collections::HashSet::new();
+        for &tid in track_ids {
+            if let Some(ts) = table.get(tid)? {
+                if now - ts.value() < UNAVAILABLE_TTL_SECS {
+                    unavail.insert(tid.to_string());
+                }
+            }
+        }
+        Ok(unavail)
+    }
+
+    /// Mark a track as unavailable (403 after retries).
+    pub fn mark_unavailable(&self, track_id: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(UNAVAILABLE)?;
+            table.insert(track_id, now)?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Clear a track's unavailable status (e.g., if it becomes available again).
+    pub fn clear_unavailable(&self, track_id: &str) -> Result<()> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(UNAVAILABLE)?;
+            let _ = table.remove(track_id);
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Count of tracks currently marked unavailable (within TTL).
+    pub fn unavailable_count(&self) -> Result<u64> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(UNAVAILABLE)?;
+        Ok(table.len()?)
     }
 
     /// Return total track count.
