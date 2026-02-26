@@ -96,10 +96,24 @@ pub struct LibraryState {
 
 
 /// Downloads state
-#[derive(Default)]
 pub struct DownloadsState {
     pub selected: usize,
     pub offline_mode: bool,
+    /// Cached synced playlist IDs (refreshed on download state changes, not every frame)
+    pub synced_playlist_ids: std::collections::HashSet<String>,
+    /// Cached download counts: (pending, completed, failed)
+    pub download_counts: (usize, usize, usize),
+}
+
+impl Default for DownloadsState {
+    fn default() -> Self {
+        Self {
+            selected: 0,
+            offline_mode: false,
+            synced_playlist_ids: std::collections::HashSet::new(),
+            download_counts: (0, 0, 0),
+        }
+    }
 }
 
 /// Playback state

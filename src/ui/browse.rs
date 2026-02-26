@@ -17,7 +17,7 @@ pub struct BrowseViewState<'a> {
     pub selected_playlist: usize,
     pub selected_track: usize,
     pub selected_tab: usize,
-    pub synced_playlist_ids: HashSet<String>,
+    pub synced_playlist_ids: &'a HashSet<String>,
     pub current_track_id: Option<&'a str>,
 }
 

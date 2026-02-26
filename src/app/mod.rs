@@ -229,17 +229,24 @@ impl App {
         };
 
         // Initialize download manager
-        let (download_manager, download_event_rx, download_records) =
+        let (download_manager, download_event_rx, download_records, initial_download_counts, initial_synced_ids) =
             match DownloadManager::with_config(&config.downloads) {
                 Ok((dm, rx)) => {
                     let records = dm.get_all_downloads().unwrap_or_default();
+                    let counts = dm.get_download_counts().unwrap_or((0, 0, 0));
+                    let mut synced_ids = std::collections::HashSet::new();
+                    if let Ok(playlists) = dm.get_synced_playlists() {
+                        for p in &playlists {
+                            synced_ids.insert(p.playlist_id.clone());
+                        }
+                    }
                     debug_log.push_back(format!("Download manager initialized ({} downloads, max {})",
                         records.len(), config.downloads.max_concurrent));
-                    (Some(dm), Some(rx), records)
+                    (Some(dm), Some(rx), records, counts, synced_ids)
                 }
                 Err(e) => {
                     debug_log.push_back(format!("Could not initialize downloads: {}", e));
-                    (None, None, Vec::new())
+                    (None, None, Vec::new(), (0, 0, 0), std::collections::HashSet::new())
                 }
             };
 
@@ -312,7 +319,11 @@ impl App {
             download_manager,
             download_event_rx,
             download_records,
-            downloads: DownloadsState::default(),
+            downloads: DownloadsState {
+                synced_playlist_ids: initial_synced_ids,
+                download_counts: initial_download_counts,
+                ..DownloadsState::default()
+            },
             library: LibraryState::default(),
             favorite_tracks: Vec::new(),
             favorite_albums: Vec::new(),
@@ -567,6 +578,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_synced_playlist_ids(&self) -> std::collections::HashSet<String> {
         let mut synced = std::collections::HashSet::new();
         if let Some(ref dm) = self.download_manager {

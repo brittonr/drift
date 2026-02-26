@@ -95,6 +95,14 @@ impl App {
     pub fn refresh_download_list(&mut self) {
         if let Some(ref dm) = self.download_manager {
             self.download_records = dm.get_all_downloads().unwrap_or_default();
+            self.downloads.download_counts = dm.get_download_counts().unwrap_or((0, 0, 0));
+            // Refresh cached synced playlist IDs
+            self.downloads.synced_playlist_ids.clear();
+            if let Ok(playlists) = dm.get_synced_playlists() {
+                for playlist in playlists {
+                    self.downloads.synced_playlist_ids.insert(playlist.playlist_id);
+                }
+            }
         }
     }
 

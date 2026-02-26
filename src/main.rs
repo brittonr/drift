@@ -305,14 +305,13 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
 
     match app.view_mode {
         ViewMode::Browse => {
-            let synced_ids = app.get_synced_playlist_ids();
             let browse_state = ui::browse::BrowseViewState {
                 playlists: &app.playlists,
                 tracks: &app.tracks,
                 selected_playlist: app.browse.selected_playlist,
                 selected_track: app.browse.selected_track,
                 selected_tab: app.browse.selected_tab,
-                synced_playlist_ids: synced_ids,
+                synced_playlist_ids: &app.downloads.synced_playlist_ids,
                 current_track_id,
             };
             let (left, right) = render_browse_view(f, &browse_state, area, theme);
@@ -375,10 +374,7 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
             }
         }
         ViewMode::Downloads => {
-            let (pending, completed, failed) = app.download_manager
-                .as_ref()
-                .and_then(|dm| dm.get_download_counts().ok())
-                .unwrap_or((0, 0, 0));
+            let (pending, completed, failed) = app.downloads.download_counts;
 
             let is_paused = app.download_manager
                 .as_ref()
