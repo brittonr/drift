@@ -1,5 +1,5 @@
 #!/usr/bin/env nix-shell
-#!nix-shell -i python3 -p python3Packages.requests python3Packages.mutagen
+#!nix-shell -i python3 -p python3Packages.requests python3Packages.mutagen python3Packages.blake3
 """
 tidal-dl — Download your entire Tidal library at MAX (HI_RES_LOSSLESS) quality.
 
@@ -16,10 +16,13 @@ import base64
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
 
+import blake3
 import requests
 from mutagen.flac import FLAC
 from mutagen.mp4 import MP4
@@ -27,7 +30,8 @@ from mutagen.mp4 import MP4
 # ── Config ────────────────────────────────────────────────────────────────────
 
 CREDS_PATH = Path.home() / ".config" / "tidal-tui" / "credentials.json"
-OUTPUT_DIR = Path.home() / "Music" / "Tidal"
+DEFAULT_OUTPUT_DIR = Path.home() / "Music" / "Tidal"
+OUTPUT_DIR = DEFAULT_OUTPUT_DIR  # overridden by --output
 CLIENT_ID = "dN2N95wCyEBTllu4"
 API_BASE = "https://api.tidal.com/v1"
 AUTH_URL = "https://auth.tidal.com/v1/oauth2/token"
@@ -46,6 +50,13 @@ DOWNLOAD_DELAY = 0.5  # seconds between track downloads
 session = requests.Session()
 creds = {}
 stats = {"downloaded": 0, "skipped": 0, "failed": 0, "total_bytes": 0}
+
+# Content-addressed dedup backed by redb (via tidal-db co-process).
+# Two indices: track_id for fast pre-download lookups, BLAKE3 hash for
+# post-download content dedup. The redb database gives us ACID writes,
+# instant startup, and zero JSON serialization overhead.
+db = None  # TidalDb instance, set in main()
+seen_this_run = set()  # track IDs processed this session
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -68,6 +79,99 @@ def fmt_bytes(n: int) -> str:
 def fmt_duration(secs: int) -> str:
     m, s = divmod(secs, 60)
     return f"{m}:{s:02d}"
+
+
+# ── Download History (content-addressed with BLAKE3, backed by redb) ──────────
+
+class TidalDb:
+    """Wraps the tidal-db Rust co-process for redb-backed download history."""
+
+    def __init__(self, db_path: Path):
+        binary = self._find_binary()
+        self.proc = subprocess.Popen(
+            [str(binary), "serve", str(db_path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            bufsize=1,  # line-buffered
+        )
+
+    @staticmethod
+    def _find_binary() -> Path:
+        script_dir = Path(__file__).resolve().parent
+        # Check CARGO_TARGET_DIR first, then local target/, then PATH
+        cargo_target = os.environ.get("CARGO_TARGET_DIR")
+        if cargo_target:
+            p = Path(cargo_target) / "release" / "tidal-db"
+            if p.exists():
+                return p
+        for profile in ("release", "debug"):
+            p = script_dir / "target" / profile / "tidal-db"
+            if p.exists():
+                return p
+        p = shutil.which("tidal-db")
+        if p:
+            return Path(p)
+        print("✗ tidal-db binary not found. Run: cargo build --release --bin tidal-db")
+        sys.exit(1)
+
+    def _cmd(self, cmd: dict) -> dict:
+        self.proc.stdin.write(json.dumps(cmd) + "\n")
+        self.proc.stdin.flush()
+        line = self.proc.stdout.readline()
+        return json.loads(line)
+
+    def check(self, track_id: str) -> dict:
+        return self._cmd({"cmd": "check", "track_id": str(track_id)})
+
+    def check_batch(self, track_ids: list[str]) -> set[str]:
+        """Batch check track IDs. Returns set of IDs that exist with valid files."""
+        result = self._cmd({"cmd": "check_batch", "track_ids": [str(t) for t in track_ids]})
+        return set(result.get("found", []))
+
+    def check_album(self, album_id) -> bool:
+        """Check if an album is marked as fully downloaded."""
+        return self._cmd({"cmd": "check_album", "album_id": str(album_id)}).get("complete", False)
+
+    def mark_album(self, album_id):
+        """Mark an album as fully downloaded."""
+        return self._cmd({"cmd": "mark_album", "album_id": str(album_id)})
+
+    def check_hash(self, blake3_hash: str) -> dict:
+        return self._cmd({"cmd": "check_hash", "hash": blake3_hash})
+
+    def put(self, track_id: str, blake3_hash: str, path: str, artist: str, title: str):
+        return self._cmd({
+            "cmd": "put",
+            "track_id": str(track_id),
+            "hash": blake3_hash,
+            "path": path,
+            "artist": artist,
+            "title": title,
+        })
+
+    def stats(self) -> dict:
+        return self._cmd({"cmd": "stats"})
+
+    def import_json(self, json_path: str) -> dict:
+        return self._cmd({"cmd": "import", "json_path": json_path})
+
+    def prune(self) -> dict:
+        return self._cmd({"cmd": "prune"})
+
+    def close(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.stdin.close()
+            self.proc.wait()
+
+
+def hash_file(path: Path) -> str:
+    """Compute BLAKE3 hash of a file."""
+    hasher = blake3.blake3()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -296,19 +400,48 @@ def file_extension(codec: str) -> str:
     return "flac"
 
 
-def download_track(track: dict, dest_dir: Path, index: int = 0, total: int = 0) -> bool:
+def download_track(track: dict, dest_dir: Path, index: int = 0, total: int = 0,
+                   use_index_as_num: bool = False, known_ids: set = None) -> bool:
     """
     Download a single track. Returns True if downloaded, False if skipped.
+    Deduplicates by track ID (pre-download) and BLAKE3 content hash (post-download)
+    across all directories (albums, favorites, playlists).
+    Pass known_ids (from check_batch) to skip individual db lookups.
     """
-    track_num = track.get("track_number", index)
+    track_id = str(track["id"])
+
+    # Fast path — skip if already processed this run
+    if track_id in seen_this_run:
+        stats["skipped"] += 1
+        return False
+
+    # Skip if batch pre-check (or individual check) says we have it
+    if known_ids is not None:
+        if track_id in known_ids:
+            stats["skipped"] += 1
+            seen_this_run.add(track_id)
+            return False
+    else:
+        result = db.check(track_id)
+        if result.get("exists"):
+            stats["skipped"] += 1
+            seen_this_run.add(track_id)
+            return False
+
+    track_num = index if use_index_as_num else track.get("track_number", index)
     title = sanitize(track["title"])
     artist = sanitize(track["artist"])
 
     # Check for existing files with any extension
     prefix = f"{track_num:02d} - {title}"
     for ext in ("flac", "m4a", "mp3"):
-        if (dest_dir / f"{prefix}.{ext}").exists():
+        existing = dest_dir / f"{prefix}.{ext}"
+        if existing.exists():
             stats["skipped"] += 1
+            # Hash and record in redb so cross-directory dedup works
+            content_hash = hash_file(existing)
+            db.put(track_id, content_hash, str(existing), track["artist"], track["title"])
+            seen_this_run.add(track_id)
             return False
 
     # Get stream URL
@@ -329,22 +462,41 @@ def download_track(track: dict, dest_dir: Path, index: int = 0, total: int = 0) 
 
     try:
         time.sleep(DOWNLOAD_DELAY)
-        resp = session.get(url, stream=True, timeout=120)
+        resp = session.get(url, stream=True, timeout=(10, 60))
         resp.raise_for_status()
 
-        total_size = int(resp.headers.get("content-length", 0))
+        # Stream to disk while computing BLAKE3 hash in one pass
+        hasher = blake3.blake3()
         downloaded = 0
 
         with open(dest, "wb") as f:
             for chunk in resp.iter_content(chunk_size=65536):
                 f.write(chunk)
+                hasher.update(chunk)
                 downloaded += len(chunk)
+
+        content_hash = hasher.hexdigest()
+
+        # Post-download content dedup — if we already have this exact content, discard
+        hash_result = db.check_hash(content_hash)
+        if hash_result.get("exists"):
+            existing_path = hash_result.get("path", "?")
+            print(f"    ≡ Duplicate content (matches {Path(existing_path).name}), removing")
+            dest.unlink()
+            stats["skipped"] += 1
+            db.put(track_id, content_hash, existing_path, track["artist"], track["title"])
+            seen_this_run.add(track_id)
+            return False
 
         stats["downloaded"] += 1
         stats["total_bytes"] += downloaded
 
         # Tag the file
         tag_file(dest, track, ext)
+
+        # Record in redb — ACID write, no periodic save needed
+        db.put(track_id, content_hash, str(dest), track["artist"], track["title"])
+        seen_this_run.add(track_id)
 
         return True
 
@@ -391,10 +543,16 @@ def tag_file(path: Path, track: dict, ext: str):
 
 def download_albums(albums: list):
     """Download all tracks from a list of albums."""
+    cached = 0
     for i, album in enumerate(albums, 1):
         artist_dir = sanitize(album["artist"])
         album_dir = sanitize(album["title"])
         dest = OUTPUT_DIR / artist_dir / album_dir
+
+        # Album-level cache — skip API call entirely if we know it's complete
+        if db.check_album(album["id"]):
+            cached += 1
+            continue
 
         print(f"\n  [{i}/{len(albums)}] {album['artist']} — {album['title']} ({album['num_tracks']} tracks)")
 
@@ -403,13 +561,26 @@ def download_albums(albums: list):
             print("    ⚠ No tracks found")
             continue
 
+        # Batch check all track IDs in one IPC call
+        track_ids = [str(t["id"]) for t in tracks]
+        known = db.check_batch(track_ids)
+
+        failed_before = stats["failed"]
         new = 0
         for j, track in enumerate(tracks, 1):
-            if download_track(track, dest, index=j, total=len(tracks)):
+            if download_track(track, dest, index=j, total=len(tracks), known_ids=known):
                 new += 1
 
+        album_failed = stats["failed"] - failed_before
         if new == 0:
             print("    ✓ Already complete")
+
+        # Mark album complete so we skip the API call next run
+        if album_failed == 0 and len(known & set(track_ids)) + new == len(tracks):
+            db.mark_album(album["id"])
+
+    if cached:
+        print(f"\n  ✓ {cached} albums skipped (cached as complete)")
 
 
 def download_loose_tracks(tracks: list, dest: Path, label: str = "Favorites"):
@@ -417,12 +588,24 @@ def download_loose_tracks(tracks: list, dest: Path, label: str = "Favorites"):
     if not tracks:
         return
 
-    print(f"\n  {label} ({len(tracks)} tracks)")
+    # Batch check all track IDs up front
+    track_ids = [str(t["id"]) for t in tracks]
+    known = db.check_batch(track_ids)
+    new_count = len(track_ids) - len(known & set(track_ids))
+
+    print(f"\n  {label} ({len(tracks)} tracks, {new_count} new)")
+    if new_count == 0:
+        print("    ✓ All tracks already downloaded")
+        for tid in track_ids:
+            seen_this_run.add(tid)
+        stats["skipped"] += len(track_ids)
+        return
 
     for i, track in enumerate(tracks, 1):
-        # For loose tracks, use artist subdirectories
+        # For loose tracks, use artist subdirectories and sequential numbering
         track_dest = dest / sanitize(track["artist"])
-        download_track(track, track_dest, index=i, total=len(tracks))
+        download_track(track, track_dest, index=i, total=len(tracks),
+                       use_index_as_num=True, known_ids=known)
 
 
 def download_playlists(playlists: list):
@@ -436,11 +619,25 @@ def download_playlists(playlists: list):
             print("    ⚠ No tracks found")
             continue
 
+        # Batch check all track IDs
+        track_ids = [str(t["id"]) for t in tracks]
+        known = db.check_batch(track_ids)
+
         for j, track in enumerate(tracks, 1):
-            download_track(track, dest, index=j, total=len(tracks))
+            download_track(track, dest, index=j, total=len(tracks),
+                           use_index_as_num=True, known_ids=known)
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Download your Tidal library at MAX quality.")
+    parser.add_argument("-o", "--output", type=Path, default=DEFAULT_OUTPUT_DIR,
+                        help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})")
+    args = parser.parse_args()
+
+    global OUTPUT_DIR, db
+    OUTPUT_DIR = args.output.resolve()
+
     print("╔══════════════════════════════════════════╗")
     print("║   tidal-dl — MAX quality library dump    ║")
     print("╚══════════════════════════════════════════╝")
@@ -450,6 +647,26 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"✓ Output directory: {OUTPUT_DIR}")
+
+    # Open redb-backed download history
+    db_path = OUTPUT_DIR / ".tidal-dl.redb"
+    db = TidalDb(db_path)
+
+    # One-time migration: import old JSON history if it exists
+    json_history = OUTPUT_DIR / ".tidal-dl-history.json"
+    if json_history.exists():
+        result = db.stats()
+        if result.get("count", 0) == 0:
+            print("  ↻ Migrating JSON history to redb...")
+            imp = db.import_json(str(json_history))
+            print(f"  ✓ Imported {imp.get('imported', 0)} tracks")
+        # Keep the JSON file around as backup (rename it)
+        backup = json_history.with_suffix(".json.bak")
+        json_history.rename(backup)
+        print(f"  ✓ Old history backed up to {backup.name}")
+
+    result = db.stats()
+    print(f"  ✓ Download history: {result.get('count', 0)} tracks in redb")
 
     start_time = time.time()
 
@@ -491,6 +708,8 @@ def main():
     print(f"  Failed:     {stats['failed']}")
     print(f"  Time:       {mins}m {secs}s")
     print(f"  Location:   {OUTPUT_DIR}")
+
+    db.close()
 
 
 if __name__ == "__main__":
