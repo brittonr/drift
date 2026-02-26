@@ -242,6 +242,9 @@ impl App {
                     }
                     debug_log.push_back(format!("Download manager initialized ({} downloads, max {})",
                         records.len(), config.downloads.max_concurrent));
+                    if dm.has_tidal_db() {
+                        debug_log.push_back("tidal-dl redb connected (blake3 content-addressed lookups)".to_string());
+                    }
                     (Some(dm), Some(rx), records, counts, synced_ids)
                 }
                 Err(e) => {

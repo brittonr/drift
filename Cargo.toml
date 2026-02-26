@@ -45,6 +45,9 @@ toml = "0.8"
 # Random number generation (for album radio track selection)
 rand = "0.8"
 
+# Embedded key-value store for tidal-dl download history
+redb = "2"
+
 # HTML scraping (for Bandcamp search)
 scraper = "0.20"
 urlencoding = "2"
@@ -54,3 +57,15 @@ nucleo = "0.5"
 
 # LRU cache for bounded memory usage
 lru = "0.12"
+
+[lib]
+name = "drift"
+path = "src/lib.rs"
+
+[[bin]]
+name = "drift"
+path = "src/main.rs"
+
+[[bin]]
+name = "tidal-db"
+path = "src/bin/tidal_db.rs"

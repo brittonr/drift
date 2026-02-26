@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, Semaphore};
 use crate::config::DownloadsConfig;
 use crate::download_db::{DownloadDb, DownloadRecord, SyncedPlaylist};
 use crate::service::{MusicService, Playlist, Track};
+use crate::tidal_db::TidalDb;
 
 const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 2;
 
@@ -29,6 +30,7 @@ pub enum DownloadEvent {
 #[allow(dead_code)]
 pub struct DownloadManager {
     db: DownloadDb,
+    tidal_db: Option<TidalDb>,
     download_dir: PathBuf,
     semaphore: Arc<Semaphore>,
     event_tx: mpsc::UnboundedSender<DownloadEvent>,
@@ -51,8 +53,19 @@ impl DownloadManager {
             DEFAULT_MAX_CONCURRENT_DOWNLOADS
         };
 
+        // Open tidal-dl's redb for content-addressed download checks
+        let tidal_db = TidalDb::default_path()
+            .and_then(|p| match TidalDb::open(&p) {
+                Ok(db) => db,
+                Err(e) => {
+                    tracing::warn!("Could not open tidal-dl redb: {}", e);
+                    None
+                }
+            });
+
         let manager = Self {
             db: DownloadDb::new()?,
+            tidal_db,
             download_dir,
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             event_tx,
@@ -95,11 +108,27 @@ impl DownloadManager {
         Ok(count)
     }
 
+    pub fn has_tidal_db(&self) -> bool {
+        self.tidal_db.is_some()
+    }
+
     pub fn is_downloaded(&self, track_id: &str) -> bool {
+        // Check tidal-dl redb first (content-addressed, verifies file exists on disk)
+        if let Some(ref tdb) = self.tidal_db {
+            if tdb.check(track_id).ok().flatten().is_some() {
+                return true;
+            }
+        }
         self.db.is_downloaded(track_id)
     }
 
     pub fn get_local_path(&self, track_id: &str) -> Option<String> {
+        // Check tidal-dl redb first (content-addressed, verifies file exists on disk)
+        if let Some(ref tdb) = self.tidal_db {
+            if let Some(path) = tdb.get_local_path(track_id).ok().flatten() {
+                return Some(path);
+            }
+        }
         self.db.get_local_path(track_id)
     }
 

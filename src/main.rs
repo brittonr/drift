@@ -9,6 +9,7 @@ mod config;
 mod service;
 mod search;
 mod search_cache;
+mod tidal_db;
 mod app;
 mod ui;
 mod handlers;
