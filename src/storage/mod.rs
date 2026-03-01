@@ -17,6 +17,16 @@ use crate::history_db::HistoryEntry;
 use crate::queue_persistence::PersistedQueue;
 use crate::service::{SearchResults, ServiceType, Track};
 
+/// A remote change detected by `poll_changes`.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Used only with aspen feature
+pub enum SyncEvent {
+    /// Queue was updated by another device.
+    QueueChanged(PersistedQueue),
+    /// History was updated by another device.
+    HistoryChanged(Vec<HistoryEntry>),
+}
+
 /// Core storage trait for all persistent drift data.
 ///
 /// All methods are async to support both local (trivially wrapped) and
@@ -58,4 +68,14 @@ pub trait DriftStorage: Send + Sync {
         query: &str,
         service_filter: Option<ServiceType>,
     ) -> Result<Option<SearchResults>>;
+
+    // ── Sync ────────────────────────────────────────────────────────
+
+    /// Poll for remote changes since last check.
+    ///
+    /// Called from the main event loop (~1s interval). Returns sync events
+    /// for data changed by other devices. Local-only backends return empty.
+    async fn poll_changes(&self) -> Result<Vec<SyncEvent>> {
+        Ok(Vec::new())
+    }
 }

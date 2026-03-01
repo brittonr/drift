@@ -3,6 +3,7 @@ mod playback;
 mod navigation;
 mod downloads;
 mod queue;
+mod sync;
 
 use std::collections::VecDeque;
 

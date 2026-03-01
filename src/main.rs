@@ -111,6 +111,9 @@ where
             // Check for config file changes
             app.check_config_reload();
 
+            // Poll for cross-device sync events
+            app.poll_sync().await;
+
             last_status_check = std::time::Instant::now();
         }
 

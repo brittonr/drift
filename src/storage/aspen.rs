@@ -15,6 +15,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -25,15 +26,28 @@ use aspen_client::AspenClient;
 use aspen_client::ClientRpcRequest;
 use aspen_client::ClientRpcResponse;
 
-use super::DriftStorage;
+use super::{DriftStorage, SyncEvent};
 use crate::history_db::HistoryEntry;
 use crate::queue_persistence::PersistedQueue;
 use crate::service::{CoverArt, SearchResults, ServiceType, Track};
+
+/// Tracks what we last saw so we can detect remote changes.
+#[derive(Default)]
+struct SyncState {
+    /// Hash of the last queue JSON we wrote or saw.
+    last_queue_hash: Option<u64>,
+    /// Number of history entries we last saw.
+    last_history_count: usize,
+    /// Hash of the most recent history key (detects new entries).
+    last_history_latest_hash: Option<u64>,
+}
 
 pub struct AspenStorage {
     client: Arc<AspenClient>,
     /// Key prefix: `drift:{user_id}:`
     prefix: String,
+    /// Mutable sync tracking state.
+    sync: Mutex<SyncState>,
 }
 
 impl AspenStorage {
@@ -56,6 +70,7 @@ impl AspenStorage {
         Ok(Self {
             client: Arc::new(client),
             prefix: format!("drift:{user_id}:"),
+            sync: Mutex::new(SyncState::default()),
         })
     }
 
@@ -115,6 +130,12 @@ impl AspenStorage {
             ClientRpcResponse::Error(e) => anyhow::bail!("KV error: {}", e.message),
             _ => anyhow::bail!("unexpected response"),
         }
+    }
+
+    fn hash_bytes(data: &[u8]) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        data.hash(&mut hasher);
+        hasher.finish()
     }
 
     fn search_cache_key(query: &str, service_filter: Option<ServiceType>) -> String {
@@ -200,7 +221,13 @@ impl DriftStorage for AspenStorage {
         let key = self.key(&format!("history:{now_ms:020}"));
         let value = serde_json::to_vec(&record)?;
         // Server-side drift plugin handles dedup
-        self.kv_set(&key, &value).await
+        self.kv_set(&key, &value).await?;
+        // Bump our sync state so we don't detect our own write as remote
+        if let Ok(mut sync) = self.sync.lock() {
+            sync.last_history_count += 1;
+            sync.last_history_latest_hash = Some(Self::hash_bytes(key.as_bytes()));
+        }
+        Ok(())
     }
 
     async fn get_history(&self, limit: usize) -> Result<Vec<HistoryEntry>> {
@@ -223,7 +250,13 @@ impl DriftStorage for AspenStorage {
     async fn save_queue(&self, queue: &PersistedQueue) -> Result<()> {
         let key = self.key("queue");
         let value = serde_json::to_vec(queue)?;
-        self.kv_set(&key, &value).await
+        // Track what we wrote so poll_changes ignores our own writes
+        let hash = Self::hash_bytes(&value);
+        self.kv_set(&key, &value).await?;
+        if let Ok(mut sync) = self.sync.lock() {
+            sync.last_queue_hash = Some(hash);
+        }
+        Ok(())
     }
 
     async fn load_queue(&self) -> Result<Option<PersistedQueue>> {
@@ -270,5 +303,48 @@ impl DriftStorage for AspenStorage {
             }
             None => Ok(None),
         }
+    }
+
+    async fn poll_changes(&self) -> Result<Vec<SyncEvent>> {
+        let mut events = Vec::new();
+
+        // ── Check queue for remote changes ──────────────────────────
+        let queue_key = self.key("queue");
+        if let Some(bytes) = self.kv_get(&queue_key).await? {
+            let hash = Self::hash_bytes(&bytes);
+            let is_new = self.sync.lock()
+                .map(|s| s.last_queue_hash != Some(hash))
+                .unwrap_or(false);
+            if is_new {
+                if let Ok(queue) = serde_json::from_slice::<PersistedQueue>(&bytes) {
+                    if let Ok(mut sync) = self.sync.lock() {
+                        sync.last_queue_hash = Some(hash);
+                    }
+                    events.push(SyncEvent::QueueChanged(queue));
+                }
+            }
+        }
+
+        // ── Check history for remote changes ────────────────────────
+        let history_prefix = self.key("history:");
+        let entries = self.kv_scan(&history_prefix, 1).await?;
+        if let Some((latest_key, _)) = entries.last() {
+            let latest_hash = Self::hash_bytes(latest_key.as_bytes());
+            let is_new = self.sync.lock()
+                .map(|s| s.last_history_latest_hash != Some(latest_hash))
+                .unwrap_or(false);
+            if is_new {
+                // New history entry detected — fetch full history
+                let full = self.get_history(100).await?;
+                let count = full.len();
+                if let Ok(mut sync) = self.sync.lock() {
+                    sync.last_history_latest_hash = Some(latest_hash);
+                    sync.last_history_count = count;
+                }
+                events.push(SyncEvent::HistoryChanged(full));
+            }
+        }
+
+        Ok(events)
     }
 }
