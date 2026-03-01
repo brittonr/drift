@@ -75,7 +75,7 @@ impl App {
         }
 
         self.playback.is_playing = true;
-        self.record_history(&track);
+        self.record_history(&track).await;
         self.current_track = Some(track);
         self.add_debug("Playback started".to_string());
         Ok(())
@@ -99,7 +99,7 @@ impl App {
         }
 
         self.playback.is_playing = true;
-        self.record_history(&track);
+        self.record_history(&track).await;
         self.current_track = Some(track);
         self.add_debug("Video playback started in mpv".to_string());
         Ok(())

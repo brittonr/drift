@@ -13,12 +13,12 @@ use crate::album_art::AlbumArtCache;
 use crate::cava::CavaVisualizer;
 use crate::config::Config;
 use crate::download_db::DownloadRecord;
-use crate::history_db::{HistoryDb, HistoryEntry};
+use crate::history_db::HistoryEntry;
 use crate::mpd::{CurrentSong, MpdController, QueueItem};
-use crate::queue_persistence::{self, PersistedQueue};
+use crate::queue_persistence::PersistedQueue;
 use crate::search::{ResultScorer, SearchHistory};
-use crate::search_cache::SearchCache;
 use crate::service::{Album, Artist, CoverArt, MixedPlaylistStorage, MultiServiceManager, MusicService, Playlist, SearchResults, Track};
+use crate::storage::DriftStorage;
 use crate::downloads::{DownloadEvent, DownloadManager};
 use crate::video::MpvController;
 
@@ -41,7 +41,6 @@ pub struct App {
     pub search: SearchState,
     pub search_results: Option<SearchResults>,
     pub search_history: SearchHistory,
-    pub search_cache: SearchCache,
 
     // Playback state
     pub playback: PlaybackState,
@@ -86,9 +85,11 @@ pub struct App {
     pub album_detail: AlbumDetailState,
     pub navigation_history: Vec<ViewMode>,
 
-    // Playback history
-    pub history_db: Option<HistoryDb>,
+    // Playback history (cached from storage)
     pub history_entries: Vec<HistoryEntry>,
+
+    // Storage backend (local or aspen)
+    pub storage: Box<dyn DriftStorage>,
 
     // Configuration
     pub config: Config,
@@ -206,9 +207,39 @@ impl App {
         let album_art_cache = AlbumArtCache::new(config.ui.album_art_cache_size)?;
         debug_log.push_back(format!("Album art cache initialized (max {} images)", config.ui.album_art_cache_size));
 
+        // Initialize storage backend
+        let storage: Box<dyn crate::storage::DriftStorage> = if config.storage.backend == "aspen" {
+            #[cfg(feature = "aspen")]
+            {
+                let ticket = config.storage.cluster_ticket.as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("storage.cluster_ticket required when backend = \"aspen\""))?;
+                let user_id = config.storage.user_id.clone()
+                    .unwrap_or_else(|| hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_else(|_| "drift".to_string()));
+                debug_log.push_back(format!("Connecting to Aspen cluster as '{}'...", user_id));
+                match crate::storage::aspen::AspenStorage::connect(ticket, &user_id).await {
+                    Ok(s) => {
+                        debug_log.push_back("Connected to Aspen cluster".to_string());
+                        Box::new(s)
+                    }
+                    Err(e) => {
+                        debug_log.push_back(format!("Aspen connection failed, falling back to local: {}", e));
+                        Box::new(crate::storage::local::LocalStorage::new(config.search.cache_ttl_seconds)?)
+                    }
+                }
+            }
+            #[cfg(not(feature = "aspen"))]
+            {
+                debug_log.push_back("Aspen backend requested but 'aspen' feature not enabled, using local".to_string());
+                Box::new(crate::storage::local::LocalStorage::new(config.search.cache_ttl_seconds)?)
+            }
+        } else {
+            Box::new(crate::storage::local::LocalStorage::new(config.search.cache_ttl_seconds)?)
+        };
+        debug_log.push_back(format!("Storage backend: {}", storage.backend_name()));
+
         // Load persisted queue
         let (local_queue, pending_restore) = if config.playback.resume_on_startup {
-            match queue_persistence::load_queue() {
+            match storage.load_queue().await {
                 Ok(Some(persisted)) => {
                     debug_log.push_back(format!("Found {} tracks in saved queue", persisted.tracks.len()));
                     let tracks: Vec<Track> = persisted.tracks.iter().map(Track::from).collect();
@@ -253,16 +284,15 @@ impl App {
                 }
             };
 
-        // Initialize playback history database
-        let (history_db, history_entries) = match HistoryDb::new() {
-            Ok(db) => {
-                let entries = db.get_recent(100).unwrap_or_default();
-                debug_log.push_back(format!("History database initialized ({} entries)", entries.len()));
-                (Some(db), entries)
+        // Load playback history from storage
+        let history_entries = match storage.get_history(100).await {
+            Ok(entries) => {
+                debug_log.push_back(format!("History loaded ({} entries)", entries.len()));
+                entries
             }
             Err(e) => {
-                debug_log.push_back(format!("Could not initialize history: {}", e));
-                (None, Vec::new())
+                debug_log.push_back(format!("Could not load history: {}", e));
+                Vec::new()
             }
         };
 
@@ -284,14 +314,6 @@ impl App {
             debug_log.push_back(format!("Loaded {} search history entries", search_history.entries.len()));
         }
 
-        // Initialize search cache
-        let search_cache = SearchCache::new(config.search.cache_ttl_seconds)?;
-        if config.search.cache_enabled {
-            debug_log.push_back(format!("Search cache initialized (TTL: {}s)", config.search.cache_ttl_seconds));
-        } else {
-            debug_log.push_back("Search cache disabled in config".to_string());
-        }
-
         Ok(Self {
             view_mode: ViewMode::Browse,
             playlists,
@@ -300,7 +322,6 @@ impl App {
             search: SearchState::new(),
             search_results: None,
             search_history,
-            search_cache,
             playback: PlaybackState {
                 volume: default_volume,
                 ..Default::default()
@@ -334,8 +355,8 @@ impl App {
             artist_detail: ArtistDetailState::default(),
             album_detail: AlbumDetailState::default(),
             navigation_history: Vec::new(),
-            history_db,
             history_entries,
+            storage,
             config,
             config_mtime: Config::get_mtime(),
             show_help: false,
@@ -461,7 +482,7 @@ impl App {
 
         // Check cache first
         if self.config.search.cache_enabled {
-            if let Some(cached_results) = self.search_cache.get(&query, service_filter) {
+            if let Ok(Some(cached_results)) = self.storage.get_cached_search(&query, service_filter).await {
                 let track_count = cached_results.tracks.len();
                 let album_count = cached_results.albums.len();
                 let artist_count = cached_results.artists.len();
@@ -503,7 +524,7 @@ impl App {
 
                 // Cache the results
                 if self.config.search.cache_enabled {
-                    self.search_cache.insert(&query, service_filter, results.clone());
+                    let _ = self.storage.cache_search(&query, service_filter, &results).await;
                 }
 
                 // Check if more results might be available (heuristic)
@@ -722,16 +743,14 @@ impl App {
     }
 
     /// Record a track to playback history
-    pub fn record_history(&mut self, track: &Track) {
-        if let Some(ref db) = self.history_db {
-            match db.record_play(track) {
-                Ok(()) => {
-                    // Refresh the cached list
-                    self.history_entries = db.get_recent(100).unwrap_or_default();
-                }
-                Err(e) => {
-                    self.add_debug(format!("Failed to record history: {}", e));
-                }
+    pub async fn record_history(&mut self, track: &Track) {
+        match self.storage.record_play(track).await {
+            Ok(()) => {
+                // Refresh the cached list
+                self.history_entries = self.storage.get_history(100).await.unwrap_or_default();
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to record history: {}", e));
             }
         }
     }

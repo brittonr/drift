@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::App;
 use super::state::ViewMode;
-use crate::queue_persistence::{self, PersistedQueue};
+use crate::queue_persistence::PersistedQueue;
 use crate::service::{MusicService, Track};
 use crate::ui::search::SearchTab;
 
@@ -10,7 +10,7 @@ impl App {
     pub async fn save_queue_state(&mut self) {
         if self.local_queue.is_empty() {
             let persisted = PersistedQueue::new();
-            if let Err(e) = queue_persistence::save_queue(&persisted) {
+            if let Err(e) = self.storage.save_queue(&persisted).await {
                 self.add_debug(format!("Failed to save queue: {}", e));
             }
             return;
@@ -28,7 +28,7 @@ impl App {
             elapsed,
         );
 
-        match queue_persistence::save_queue(&persisted) {
+        match self.storage.save_queue(&persisted).await {
             Ok(()) => {
                 if let (Some(pos), Some(el)) = (position, elapsed) {
                     self.add_debug(format!("Saved {} tracks (pos {}, {}s)", self.local_queue.len(), pos + 1, el));

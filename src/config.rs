@@ -21,6 +21,31 @@ pub struct Config {
     pub bandcamp: BandcampConfig,
     pub search: SearchConfig,
     pub video: VideoConfig,
+    pub storage: StorageConfig,
+}
+
+/// Storage backend configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageConfig {
+    /// Backend type: "local" or "aspen"
+    pub backend: String,
+    /// Aspen cluster ticket (required when backend = "aspen")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster_ticket: Option<String>,
+    /// User ID for Aspen key namespacing (default: hostname)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: "local".to_string(),
+            cluster_ticket: None,
+            user_id: None,
+        }
+    }
 }
 
 

@@ -58,6 +58,17 @@ nucleo = "0.5"
 # LRU cache for bounded memory usage
 lru = "0.12"
 
+# Hostname detection (for Aspen user ID)
+hostname = "0.4"
+
+# Aspen distributed backend (optional)
+aspen-client = { path = "../aspen/crates/aspen-client", optional = true }
+aspen-client-api = { path = "../aspen/crates/aspen-client-api", optional = true, default-features = false }
+
+[features]
+default = []
+aspen = ["dep:aspen-client", "dep:aspen-client-api"]
+
 [lib]
 name = "drift"
 path = "src/lib.rs"
