@@ -6,6 +6,7 @@
 //! drift:{user}:history:{timestamp_ms:020}   → JSON HistoryEntry
 //! drift:{user}:queue                         → JSON PersistedQueue
 //! drift:{user}:search:{hash}               → JSON CachedSearch
+//! drift:{user}:search_history               → JSON SearchHistory
 //! ```
 //!
 //! The drift plugin running on the cluster handles dedup, pruning,
@@ -29,6 +30,7 @@ use aspen_client::ClientRpcResponse;
 use super::{DriftStorage, SyncEvent};
 use crate::history_db::HistoryEntry;
 use crate::queue_persistence::PersistedQueue;
+use crate::search::SearchHistory;
 use crate::service::{CoverArt, SearchResults, ServiceType, Track};
 
 /// Tracks what we last saw so we can detect remote changes.
@@ -302,6 +304,27 @@ impl DriftStorage for AspenStorage {
                 Ok(Some(results))
             }
             None => Ok(None),
+        }
+    }
+
+    async fn save_search_history(&self, history: &SearchHistory) -> Result<()> {
+        let key = self.key("search_history");
+        let value = serde_json::to_vec(history)?;
+        self.kv_set(&key, &value).await
+    }
+
+    async fn load_search_history(&self, max_size: usize) -> Result<SearchHistory> {
+        let key = self.key("search_history");
+        match self.kv_get(&key).await? {
+            Some(bytes) => {
+                let mut history: SearchHistory = serde_json::from_slice(&bytes)?;
+                history.max_size = max_size;
+                while history.entries.len() > max_size {
+                    history.entries.pop_back();
+                }
+                Ok(history)
+            }
+            None => Ok(SearchHistory::new(max_size)),
         }
     }
 

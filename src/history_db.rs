@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::service::{CoverArt, ServiceType, Track};
@@ -8,7 +9,22 @@ use crate::service::{CoverArt, ServiceType, Track};
 const MAX_HISTORY_SIZE: usize = 500;
 const DEDUP_WINDOW_SECONDS: i64 = 10;
 
-// HistoryEntry.id is populated by SQLite but only used internally
+const HISTORY_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("playback_history");
+
+/// Serialized form stored as JSON bytes in redb.
+#[derive(Serialize, Deserialize)]
+struct StoredEntry {
+    track_id: String,
+    title: String,
+    artist: String,
+    album: String,
+    duration_seconds: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover_art_id: Option<String>,
+    service: String,
+    played_at_ms: u64,
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct HistoryEntry {
@@ -37,18 +53,57 @@ impl From<&HistoryEntry> for Track {
     }
 }
 
+impl StoredEntry {
+    fn from_track(track: &Track, now_ms: u64) -> Self {
+        let cover_art_id = match &track.cover_art {
+            CoverArt::ServiceId { id, .. } => Some(id.clone()),
+            CoverArt::Url(url) => Some(url.clone()),
+            CoverArt::None => None,
+        };
+        Self {
+            track_id: track.id.clone(),
+            title: track.title.clone(),
+            artist: track.artist.clone(),
+            album: track.album.clone(),
+            duration_seconds: track.duration_seconds,
+            cover_art_id,
+            service: track.service.to_string(),
+            played_at_ms: now_ms,
+        }
+    }
+
+    fn to_history_entry(&self, key: u64) -> HistoryEntry {
+        let played_at = DateTime::from_timestamp_millis(self.played_at_ms as i64)
+            .unwrap_or_else(Utc::now);
+        let service = self.service.parse().unwrap_or(ServiceType::Tidal);
+        HistoryEntry {
+            id: key as i64,
+            track_id: self.track_id.clone(),
+            title: self.title.clone(),
+            artist: self.artist.clone(),
+            album: self.album.clone(),
+            duration_seconds: self.duration_seconds,
+            cover_art_id: self.cover_art_id.clone(),
+            service,
+            played_at,
+        }
+    }
+}
+
 pub struct HistoryDb {
-    conn: Connection,
+    db: Database,
 }
 
 impl HistoryDb {
     pub fn new() -> Result<Self> {
         let db_path = Self::get_db_path()?;
-        let conn = Connection::open(&db_path)
+        let db = Database::create(&db_path)
             .context("Failed to open history database")?;
-        let db = Self { conn };
-        db.init_schema()?;
-        Ok(db)
+        // Ensure table exists
+        let txn = db.begin_write()?;
+        { let _ = txn.open_table(HISTORY_TABLE)?; }
+        txn.commit()?;
+        Ok(Self { db })
     }
 
     fn get_db_path() -> Result<PathBuf> {
@@ -57,165 +112,117 @@ impl HistoryDb {
             .join("drift");
         std::fs::create_dir_all(&data_dir)
             .context("Failed to create data directory")?;
-        Ok(data_dir.join("history.db"))
-    }
-
-    fn init_schema(&self) -> Result<()> {
-        // Check if we need to migrate from old schema (track_id INTEGER)
-        // If old schema exists, drop it (fresh start approach)
-        let has_old_schema: bool = self.conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('playback_history') WHERE name = 'track_id' AND type = 'INTEGER'",
-            [],
-            |row| Ok(row.get::<_, i64>(0)? > 0),
-        ).unwrap_or(false);
-
-        if has_old_schema {
-            self.conn.execute("DROP TABLE IF EXISTS playback_history", [])
-                .context("Failed to drop old history table")?;
-        }
-
-        self.conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS playback_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                track_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                artist TEXT NOT NULL,
-                album TEXT NOT NULL,
-                duration_seconds INTEGER NOT NULL,
-                cover_art_id TEXT,
-                service TEXT NOT NULL DEFAULT 'tidal',
-                played_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_played_at ON playback_history(played_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_track_id ON playback_history(track_id);"
-        ).context("Failed to initialize history schema")?;
-        Ok(())
+        Ok(data_dir.join("history.redb"))
     }
 
     pub fn record_play(&self, track: &Track) -> Result<()> {
-        // Check for duplicate play within dedup window
-        let recent_play: Option<i64> = self.conn.query_row(
-            "SELECT id FROM playback_history
-             WHERE track_id = ?1
-             AND played_at > datetime('now', ?2)
-             LIMIT 1",
-            params![
-                &track.id,
-                format!("-{} seconds", DEDUP_WINDOW_SECONDS)
-            ],
-            |row| row.get(0),
-        ).ok();
+        let now_ms = Utc::now().timestamp_millis() as u64;
+        let cutoff_ms = now_ms.saturating_sub((DEDUP_WINDOW_SECONDS * 1000) as u64);
 
-        if recent_play.is_some() {
-            // Skip recording, this is a duplicate
-            return Ok(());
+        // Check for recent duplicate
+        {
+            let rtxn = self.db.begin_read()?;
+            let table = rtxn.open_table(HISTORY_TABLE)?;
+            // Scan entries from cutoff to now
+            let range = table.range(cutoff_ms..=now_ms)?;
+            for entry in range {
+                let (_, val) = entry?;
+                if let Ok(stored) = serde_json::from_slice::<StoredEntry>(val.value()) {
+                    if stored.track_id == track.id {
+                        return Ok(()); // Dedup — skip
+                    }
+                }
+            }
         }
 
-        // Extract cover art ID if available
-        let cover_art_id = match &track.cover_art {
-            CoverArt::ServiceId { id, .. } => Some(id.as_str()),
-            CoverArt::Url(url) => Some(url.as_str()),
-            CoverArt::None => None,
-        };
+        // Insert
+        let stored = StoredEntry::from_track(track, now_ms);
+        let json = serde_json::to_vec(&stored)?;
+        {
+            let txn = self.db.begin_write()?;
+            {
+                let mut table = txn.open_table(HISTORY_TABLE)?;
+                // Ensure unique key (if two plays at same ms, bump)
+                let mut key = now_ms;
+                while table.get(key)?.is_some() {
+                    key += 1;
+                }
+                table.insert(key, json.as_slice())?;
+            }
+            txn.commit()?;
+        }
 
-        self.conn.execute(
-            "INSERT INTO playback_history
-             (track_id, title, artist, album, duration_seconds, cover_art_id, service, played_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
-            params![
-                &track.id,
-                track.title,
-                track.artist,
-                track.album,
-                track.duration_seconds,
-                cover_art_id,
-                track.service.to_string(),
-            ],
-        ).context("Failed to record play")?;
-
-        // Prune old entries if we exceed max size
         self.prune_old_entries()?;
-
         Ok(())
     }
 
     pub fn get_recent(&self, limit: usize) -> Result<Vec<HistoryEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, track_id, title, artist, album, duration_seconds, cover_art_id, service, played_at
-             FROM playback_history
-             ORDER BY played_at DESC
-             LIMIT ?1"
-        )?;
-
-        let entries = stmt.query_map([limit as i64], |row| {
-            let played_at_str: String = row.get(8)?;
-            let played_at = DateTime::parse_from_rfc3339(&played_at_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| {
-                    // Fallback: try SQLite datetime format
-                    chrono::NaiveDateTime::parse_from_str(&played_at_str, "%Y-%m-%d %H:%M:%S")
-                        .map(|ndt| ndt.and_utc())
-                        .unwrap_or_else(|_| Utc::now())
-                });
-
-            let service_str: String = row.get(7)?;
-            let service = service_str.parse().unwrap_or(ServiceType::Tidal);
-
-            Ok(HistoryEntry {
-                id: row.get(0)?,
-                track_id: row.get(1)?,
-                title: row.get(2)?,
-                artist: row.get(3)?,
-                album: row.get(4)?,
-                duration_seconds: row.get(5)?,
-                cover_art_id: row.get(6)?,
-                service,
-                played_at,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .context("Failed to fetch history entries")?;
-
+        let rtxn = self.db.begin_read()?;
+        let table = rtxn.open_table(HISTORY_TABLE)?;
+        let mut entries = Vec::with_capacity(limit);
+        // Reverse iterate (newest first)
+        for item in table.iter()?.rev() {
+            if entries.len() >= limit {
+                break;
+            }
+            let (key, val) = item?;
+            if let Ok(stored) = serde_json::from_slice::<StoredEntry>(val.value()) {
+                entries.push(stored.to_history_entry(key.value()));
+            }
+        }
         Ok(entries)
     }
 
     #[allow(dead_code)]
     pub fn clear_history(&self) -> Result<()> {
-        self.conn.execute("DELETE FROM playback_history", [])
-            .context("Failed to clear history")?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(HISTORY_TABLE)?;
+            // Collect all keys then delete
+            let keys: Vec<u64> = table.iter()?
+                .map(|r| r.map(|(k, _)| k.value()))
+                .collect::<std::result::Result<_, _>>()?;
+            for key in keys {
+                table.remove(key)?;
+            }
+        }
+        txn.commit()?;
         Ok(())
     }
 
     fn prune_old_entries(&self) -> Result<()> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM playback_history",
-            [],
-            |row| row.get(0),
-        )?;
-
-        if count as usize > MAX_HISTORY_SIZE {
-            let to_delete = count as usize - MAX_HISTORY_SIZE;
-            self.conn.execute(
-                "DELETE FROM playback_history
-                 WHERE id IN (
-                     SELECT id FROM playback_history
-                     ORDER BY played_at ASC
-                     LIMIT ?1
-                 )",
-                [to_delete as i64],
-            )?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(HISTORY_TABLE)?;
+            let count = table.len()? as usize;
+            if count > MAX_HISTORY_SIZE {
+                let to_delete = count - MAX_HISTORY_SIZE;
+                // Collect oldest keys (forward iteration = ascending order)
+                let keys: Vec<u64> = table.iter()?
+                    .take(to_delete)
+                    .map(|r| r.map(|(k, _)| k.value()))
+                    .collect::<std::result::Result<_, _>>()?;
+                for key in keys {
+                    table.remove(key)?;
+                }
+            }
         }
-
+        txn.commit()?;
         Ok(())
     }
 
     #[cfg(test)]
     pub fn new_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()
-            .context("Failed to open in-memory database")?;
-        let db = Self { conn };
-        db.init_schema()?;
-        Ok(db)
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("drift-history-test-{}-{}.redb", std::process::id(), n));
+        let db = Database::create(&path)
+            .context("Failed to create test database")?;
+        let txn = db.begin_write()?;
+        { let _ = txn.open_table(HISTORY_TABLE)?; }
+        txn.commit()?;
+        Ok(Self { db })
     }
 }
 
@@ -260,19 +267,31 @@ mod tests {
     fn test_ordering_most_recent_first() {
         let db = HistoryDb::new_in_memory().unwrap();
 
-        // Insert with slight delay simulation by inserting in order
-        for i in 1..=5 {
-            db.conn.execute(
-                "INSERT INTO playback_history
-                 (track_id, title, artist, album, duration_seconds, service, played_at)
-                 VALUES (?1, ?2, 'Artist', 'Album', 180, 'tidal', datetime('now', ?3))",
-                params![i.to_string(), format!("Song {}", i), format!("-{} seconds", 6 - i)],
-            ).unwrap();
+        // Insert entries with different timestamps
+        let txn = db.db.begin_write().unwrap();
+        {
+            let mut table = txn.open_table(HISTORY_TABLE).unwrap();
+            let base_ms = Utc::now().timestamp_millis() as u64;
+            for i in 1u64..=5 {
+                let stored = StoredEntry {
+                    track_id: i.to_string(),
+                    title: format!("Song {}", i),
+                    artist: "Artist".to_string(),
+                    album: "Album".to_string(),
+                    duration_seconds: 180,
+                    cover_art_id: None,
+                    service: "tidal".to_string(),
+                    played_at_ms: base_ms - (6 - i) * 1000, // older entries have lower timestamps
+                };
+                let json = serde_json::to_vec(&stored).unwrap();
+                table.insert(stored.played_at_ms, json.as_slice()).unwrap();
+            }
         }
+        txn.commit().unwrap();
 
         let entries = db.get_recent(10).unwrap();
         assert_eq!(entries.len(), 5);
-        // Most recent should be first
+        // Most recent should be first (Song 5 has highest timestamp)
         assert_eq!(entries[0].track_id, "5");
         assert_eq!(entries[4].track_id, "1");
     }
@@ -281,14 +300,26 @@ mod tests {
     fn test_limit() {
         let db = HistoryDb::new_in_memory().unwrap();
 
-        for i in 1..=10 {
-            db.conn.execute(
-                "INSERT INTO playback_history
-                 (track_id, title, artist, album, duration_seconds, service)
-                 VALUES (?1, ?2, 'Artist', 'Album', 180, 'tidal')",
-                params![i.to_string(), format!("Song {}", i)],
-            ).unwrap();
+        let txn = db.db.begin_write().unwrap();
+        {
+            let mut table = txn.open_table(HISTORY_TABLE).unwrap();
+            let base_ms = Utc::now().timestamp_millis() as u64;
+            for i in 1u64..=10 {
+                let stored = StoredEntry {
+                    track_id: i.to_string(),
+                    title: format!("Song {}", i),
+                    artist: "Artist".to_string(),
+                    album: "Album".to_string(),
+                    duration_seconds: 180,
+                    cover_art_id: None,
+                    service: "tidal".to_string(),
+                    played_at_ms: base_ms + i,
+                };
+                let json = serde_json::to_vec(&stored).unwrap();
+                table.insert(stored.played_at_ms, json.as_slice()).unwrap();
+            }
         }
+        txn.commit().unwrap();
 
         let entries = db.get_recent(5).unwrap();
         assert_eq!(entries.len(), 5);
@@ -354,25 +385,33 @@ mod tests {
     fn test_prune_old_entries() {
         let db = HistoryDb::new_in_memory().unwrap();
 
-        // Insert more than MAX_HISTORY_SIZE entries
-        for i in 1..=(MAX_HISTORY_SIZE + 10) {
-            db.conn.execute(
-                "INSERT INTO playback_history
-                 (track_id, title, artist, album, duration_seconds, service, played_at)
-                 VALUES (?1, ?2, 'Artist', 'Album', 180, 'tidal', datetime('now', ?3))",
-                params![i.to_string(), format!("Song {}", i), format!("-{} seconds", MAX_HISTORY_SIZE + 10 - i)],
-            ).unwrap();
+        // Insert more than MAX_HISTORY_SIZE entries directly
+        let txn = db.db.begin_write().unwrap();
+        {
+            let mut table = txn.open_table(HISTORY_TABLE).unwrap();
+            let base_ms = 1_000_000_000_000u64; // some base timestamp
+            for i in 0..(MAX_HISTORY_SIZE + 10) as u64 {
+                let stored = StoredEntry {
+                    track_id: i.to_string(),
+                    title: format!("Song {}", i),
+                    artist: "Artist".to_string(),
+                    album: "Album".to_string(),
+                    duration_seconds: 180,
+                    cover_art_id: None,
+                    service: "tidal".to_string(),
+                    played_at_ms: base_ms + i,
+                };
+                let json = serde_json::to_vec(&stored).unwrap();
+                table.insert(stored.played_at_ms, json.as_slice()).unwrap();
+            }
         }
+        txn.commit().unwrap();
 
         // Trigger prune
         db.prune_old_entries().unwrap();
 
-        let count: i64 = db.conn.query_row(
-            "SELECT COUNT(*) FROM playback_history",
-            [],
-            |row| row.get(0),
-        ).unwrap();
-
-        assert_eq!(count as usize, MAX_HISTORY_SIZE);
+        let rtxn = db.db.begin_read().unwrap();
+        let table = rtxn.open_table(HISTORY_TABLE).unwrap();
+        assert_eq!(table.len().unwrap() as usize, MAX_HISTORY_SIZE);
     }
 }

@@ -1,4 +1,4 @@
-//! Local storage backend — wraps existing SQLite, TOML, and JSON files.
+//! Local storage backend — wraps redb, TOML, and JSON files.
 //!
 //! Preserves drift's original behavior with zero changes to the underlying
 //! storage format. The async trait methods just lock and call through.
@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use super::DriftStorage;
 use crate::history_db::{HistoryDb, HistoryEntry};
 use crate::queue_persistence::{self, PersistedQueue};
+use crate::search::SearchHistory;
 use crate::search_cache::SearchCache;
 use crate::service::{SearchResults, ServiceType, Track};
 
@@ -85,5 +86,13 @@ impl DriftStorage for LocalStorage {
     ) -> Result<Option<SearchResults>> {
         let mut cache = self.search_cache.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
         Ok(cache.get(query, service_filter))
+    }
+
+    async fn save_search_history(&self, history: &SearchHistory) -> Result<()> {
+        history.save()
+    }
+
+    async fn load_search_history(&self, max_size: usize) -> Result<SearchHistory> {
+        Ok(SearchHistory::load(max_size))
     }
 }

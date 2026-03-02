@@ -1,6 +1,6 @@
 //! Storage abstraction for Drift.
 //!
-//! - [`LocalStorage`]: SQLite + TOML + JSON (default, fully offline)
+//! - [`LocalStorage`]: redb + TOML + JSON (default, fully offline)
 //! - [`AspenStorage`]: Aspen distributed KV over iroh QUIC (multi-device sync)
 //!
 //! The `App` holds a `Box<dyn DriftStorage>` and all persistence goes through it.
@@ -15,6 +15,7 @@ use async_trait::async_trait;
 
 use crate::history_db::HistoryEntry;
 use crate::queue_persistence::PersistedQueue;
+use crate::search::SearchHistory;
 use crate::service::{SearchResults, ServiceType, Track};
 
 /// A remote change detected by `poll_changes`.
@@ -68,6 +69,14 @@ pub trait DriftStorage: Send + Sync {
         query: &str,
         service_filter: Option<ServiceType>,
     ) -> Result<Option<SearchResults>>;
+
+    // ── Search History ────────────────────────────────────────────
+
+    /// Save search history.
+    async fn save_search_history(&self, history: &SearchHistory) -> Result<()>;
+
+    /// Load search history. Returns empty history on miss.
+    async fn load_search_history(&self, max_size: usize) -> Result<SearchHistory>;
 
     // ── Sync ────────────────────────────────────────────────────────
 

@@ -309,11 +309,19 @@ impl App {
         let default_volume = config.playback.default_volume;
         let show_visualizer = config.ui.show_visualizer;
 
-        // Load search history
-        let search_history = SearchHistory::load(config.search.history_size);
-        if !search_history.entries.is_empty() {
-            debug_log.push_back(format!("Loaded {} search history entries", search_history.entries.len()));
-        }
+        // Load search history via storage backend
+        let search_history = match storage.load_search_history(config.search.history_size).await {
+            Ok(h) => {
+                if !h.entries.is_empty() {
+                    debug_log.push_back(format!("Loaded {} search history entries", h.entries.len()));
+                }
+                h
+            }
+            Err(e) => {
+                debug_log.push_back(format!("Could not load search history: {}", e));
+                SearchHistory::new(config.search.history_size)
+            }
+        };
 
         Ok(Self {
             view_mode: ViewMode::Browse,
@@ -502,7 +510,7 @@ impl App {
                 self.search.selected_artist = 0;
 
                 self.search_history.add(&query, total_count);
-                let _ = self.search_history.save();
+                let _ = self.storage.save_search_history(&self.search_history).await;
 
                 self.search.is_active = false;
                 return Ok(());
@@ -540,7 +548,7 @@ impl App {
 
                 // Record search in history
                 self.search_history.add(&query, total_count);
-                let _ = self.search_history.save();
+                let _ = self.storage.save_search_history(&self.search_history).await;
             }
             Err(e) => {
                 self.add_debug(format!("Search failed: {}", e));
