@@ -2,7 +2,7 @@ use super::App;
 use super::state::ViewMode;
 use crate::download_db::DownloadStatus;
 use crate::downloads::DownloadEvent;
-use crate::service::Track;
+use crate::service::{MusicService, Track};
 use crate::ui::library::LibraryTab;
 use crate::ui::search::SearchTab;
 
@@ -228,6 +228,81 @@ impl App {
                     self.add_debug(format!("Failed to sync playlist: {}", e));
                 }
             }
+        }
+    }
+
+    /// Periodically re-check synced playlists for new tracks.
+    ///
+    /// Fetches current track lists from the API for each synced playlist
+    /// and queues any new tracks that weren't there last time.
+    pub async fn auto_sync_playlists(&mut self) {
+        let interval_mins = self.config.downloads.sync_interval_minutes;
+        if interval_mins == 0 {
+            return; // Disabled
+        }
+
+        let interval = std::time::Duration::from_secs(interval_mins * 60);
+        if self.last_playlist_sync.elapsed() < interval {
+            return; // Not time yet
+        }
+
+        self.last_playlist_sync = std::time::Instant::now();
+
+        // Get the list of synced playlist IDs
+        let synced_ids: Vec<String> = self.downloads.synced_playlist_ids.iter().cloned().collect();
+        if synced_ids.is_empty() {
+            return;
+        }
+
+        self.add_debug(format!("Auto-sync: checking {} synced playlist(s) for new tracks", synced_ids.len()));
+
+        let mut total_new = 0usize;
+        for playlist_id in &synced_ids {
+            // Find the playlist metadata (title) from our loaded playlists
+            let playlist = self.playlists.iter().find(|p| &p.id == playlist_id).cloned();
+            let playlist = match playlist {
+                Some(p) => p,
+                None => {
+                    // Playlist not in our current list — skip (user may have removed it)
+                    continue;
+                }
+            };
+
+            // Fetch current tracks from the service
+            match self.music_service.get_playlist_tracks(playlist_id).await {
+                Ok(tracks) => {
+                    if let Some(ref dm) = self.download_manager {
+                        match dm.sync_playlist(&playlist, &tracks) {
+                            Ok(new_count) => {
+                                if new_count > 0 {
+                                    self.add_debug(format!(
+                                        "Auto-sync '{}': {} new track(s) queued",
+                                        playlist.title, new_count
+                                    ));
+                                    total_new += new_count;
+                                }
+                            }
+                            Err(e) => {
+                                self.add_debug(format!(
+                                    "Auto-sync '{}' failed: {}",
+                                    playlist.title, e
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.add_debug(format!(
+                        "Auto-sync: failed to fetch tracks for '{}': {}",
+                        playlist.title, e
+                    ));
+                }
+            }
+        }
+
+        if total_new > 0 {
+            self.refresh_download_list();
+            self.set_status_info(format!("Auto-sync: {} new track(s) queued for download", total_new));
         }
     }
 

@@ -249,6 +249,9 @@ pub struct DownloadsConfig {
     pub download_dir: Option<String>,
     /// Auto-tag downloaded files with metadata
     pub auto_tag: bool,
+    /// Auto-sync interval in minutes for synced playlists (0 = disabled)
+    /// Periodically re-checks synced playlists for new tracks and queues them
+    pub sync_interval_minutes: u64,
 }
 
 impl Default for DownloadsConfig {
@@ -257,6 +260,7 @@ impl Default for DownloadsConfig {
             max_concurrent: 2,
             download_dir: None,
             auto_tag: true,
+            sync_interval_minutes: 30,
         }
     }
 }

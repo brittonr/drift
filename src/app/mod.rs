@@ -111,6 +111,9 @@ pub struct App {
 
     // Video playback controller (for YouTube video mode)
     pub video_controller: Option<MpvController>,
+
+    // Automatic playlist sync tracking
+    pub last_playlist_sync: std::time::Instant,
 }
 
 impl App {
@@ -374,6 +377,7 @@ impl App {
             dialog: DialogState::default(),
             status_message: None,
             video_controller,
+            last_playlist_sync: std::time::Instant::now(),
         })
     }
 

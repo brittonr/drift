@@ -138,13 +138,23 @@ class TidalDb:
         result = self._cmd({"cmd": "check_batch", "track_ids": [str(t) for t in track_ids]})
         return set(result.get("found", []))
 
-    def check_album(self, album_id) -> bool:
-        """Check if an album is marked as fully downloaded."""
-        return self._cmd({"cmd": "check_album", "album_id": str(album_id)}).get("complete", False)
+    def check_album(self, album_id, expected_tracks: int = 0) -> bool:
+        """Check if an album is marked as fully downloaded.
+        If expected_tracks > 0, also verifies the cached track count matches
+        (detects albums that gained new tracks, e.g. deluxe editions)."""
+        result = self._cmd({"cmd": "check_album", "album_id": str(album_id)})
+        if not result.get("complete", False):
+            return False
+        if expected_tracks > 0:
+            cached_count = result.get("num_tracks", 0)
+            # Legacy entries (count=0) or mismatched counts → re-check
+            if cached_count == 0 or cached_count != expected_tracks:
+                return False
+        return True
 
-    def mark_album(self, album_id):
-        """Mark an album as fully downloaded."""
-        return self._cmd({"cmd": "mark_album", "album_id": str(album_id)})
+    def mark_album(self, album_id, num_tracks: int = 0):
+        """Mark an album as fully downloaded with its track count."""
+        return self._cmd({"cmd": "mark_album", "album_id": str(album_id), "num_tracks": num_tracks})
 
     def is_unavailable(self, track_id: str) -> bool:
         """Check if a track is marked unavailable (within 7-day TTL)."""
@@ -666,8 +676,10 @@ def download_albums(albums: list):
         album_dir = sanitize(album["title"])
         dest = OUTPUT_DIR / artist_dir / album_dir
 
-        # Album-level cache — skip API call entirely if we know it's complete
-        if db.check_album(album["id"]):
+        # Album-level cache — skip API call if complete AND track count matches.
+        # If the API reports more tracks than we cached, re-check the album
+        # (catches deluxe editions, bonus tracks added after initial download).
+        if db.check_album(album["id"], expected_tracks=album["num_tracks"]):
             cached += 1
             # Show progress every 500 cached albums
             if cached % 500 == 0:
@@ -679,7 +691,7 @@ def download_albums(albums: list):
         tracks = get_album_tracks(album["id"])
         if not tracks:
             print("    ⚠ No tracks found (delisted?) — caching to skip next run")
-            db.mark_album(album["id"])
+            db.mark_album(album["id"], num_tracks=0)
             continue
 
         # Batch check all track IDs in one IPC call
@@ -698,9 +710,11 @@ def download_albums(albums: list):
         if new == 0:
             print("    ✓ Already complete")
 
-        # Mark album complete so we skip the API call next run
+        # Mark album complete with track count so we skip the API call next run.
+        # If the album later gains tracks (deluxe edition), the count mismatch
+        # will trigger a re-check.
         if album_failed == 0 and len(known & set(track_ids)) + new == len(tracks):
-            db.mark_album(album["id"])
+            db.mark_album(album["id"], num_tracks=len(tracks))
 
     if cached:
         print(f"\n  ✓ {cached} albums skipped (cached as complete)")

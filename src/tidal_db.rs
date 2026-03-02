@@ -167,18 +167,33 @@ impl TidalDb {
     }
 
     /// Check if an album is marked as fully downloaded.
-    pub fn check_album(&self, album_id: &str) -> Result<bool> {
+    /// Returns the stored track count if complete, None if not cached.
+    pub fn check_album(&self, album_id: &str) -> Result<Option<u32>> {
         let txn = self.db.begin_read()?;
         let table = txn.open_table(ALBUMS)?;
-        Ok(table.get(album_id)?.is_some())
+        match table.get(album_id)? {
+            Some(val) => {
+                let s = val.value();
+                // Parse track count from "complete:NN" format, or treat
+                // legacy "complete" as 0 (always re-check)
+                if let Some(count_str) = s.strip_prefix("complete:") {
+                    Ok(Some(count_str.parse::<u32>().unwrap_or(0)))
+                } else {
+                    // Legacy entry — return 0 so caller re-checks
+                    Ok(Some(0))
+                }
+            }
+            None => Ok(None),
+        }
     }
 
-    /// Mark an album as fully downloaded.
-    pub fn mark_album(&self, album_id: &str) -> Result<()> {
+    /// Mark an album as fully downloaded with its track count.
+    pub fn mark_album(&self, album_id: &str, num_tracks: u32) -> Result<()> {
+        let val = format!("complete:{}", num_tracks);
         let txn = self.db.begin_write()?;
         {
             let mut table = txn.open_table(ALBUMS)?;
-            table.insert(album_id, "complete")?;
+            table.insert(album_id, val.as_str())?;
         }
         txn.commit()?;
         Ok(())

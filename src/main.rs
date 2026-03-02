@@ -103,6 +103,7 @@ where
             }
 
             app.process_downloads().await;
+            app.auto_sync_playlists().await;
 
             if app.view_mode == ViewMode::Library && !app.library.loaded {
                 app.load_favorites().await;

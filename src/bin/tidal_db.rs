@@ -105,14 +105,16 @@ fn cmd_put(db: &TidalDb, cmd: &Value) -> Value {
 fn cmd_check_album(db: &TidalDb, cmd: &Value) -> Value {
     let album_id = cmd["album_id"].as_str().unwrap_or("");
     match db.check_album(album_id) {
-        Ok(complete) => json!({"complete": complete}),
+        Ok(Some(num_tracks)) => json!({"complete": true, "num_tracks": num_tracks}),
+        Ok(None) => json!({"complete": false}),
         Err(e) => json!({"error": e.to_string()}),
     }
 }
 
 fn cmd_mark_album(db: &TidalDb, cmd: &Value) -> Value {
     let album_id = cmd["album_id"].as_str().unwrap_or("");
-    match db.mark_album(album_id) {
+    let num_tracks = cmd["num_tracks"].as_u64().unwrap_or(0) as u32;
+    match db.mark_album(album_id, num_tracks) {
         Ok(()) => json!({"ok": true}),
         Err(e) => json!({"error": e.to_string()}),
     }
