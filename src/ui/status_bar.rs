@@ -12,6 +12,7 @@ pub struct StatusBarState {
     pub space_pressed: bool,
     pub pending_key: Option<char>,
     pub status_message: Option<(String, bool)>, // (message, is_error)
+    pub backend_name: Option<String>,
 }
 
 pub fn render_status_bar(
@@ -97,6 +98,15 @@ pub fn render_status_bar(
             Span::raw(": cmd | "),
             Span::styled("?", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(": help"),
+            // Backend indicator (e.g., " [local]" or " [aspen]")
+            if let Some(ref name) = state.backend_name {
+                Span::styled(
+                    format!(" [{}]", name),
+                    Style::default().fg(theme.text_muted()),
+                )
+            } else {
+                Span::raw("")
+            },
         ]))
     };
 

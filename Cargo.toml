@@ -61,6 +61,9 @@ lru = "0.12"
 # Hostname detection (for Aspen user ID)
 hostname = "0.4"
 
+# Server-side plugin logic (dedup, TTL, pruning) — also usable client-side
+drift-plugin = { path = "crates/drift-plugin" }
+
 # Aspen distributed backend (optional)
 aspen-client = { path = "../aspen/crates/aspen-client", optional = true }
 aspen-client-api = { path = "../aspen/crates/aspen-client-api", optional = true, default-features = false }

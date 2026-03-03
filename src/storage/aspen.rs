@@ -9,9 +9,9 @@
 //! drift:{user}:search_history               → JSON SearchHistory
 //! ```
 //!
-//! The drift plugin running on the cluster handles dedup, pruning,
-//! and cache TTL server-side. This client just sends standard
-//! WriteKey/ReadKey/ScanKeys RPCs.
+//! Dedup, pruning, and cache TTL are enforced client-side via the
+//! `drift_plugin` crate's pure functions. The same logic can also
+//! run server-side as a WASM plugin on the cluster.
 
 use std::collections::{hash_map::DefaultHasher, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -302,6 +302,22 @@ impl AspenStorage {
         }
     }
 
+    /// Delete a key from the KV store (best-effort, logs on failure).
+    async fn kv_delete(&self, key: &str) {
+        let conn = self.connection.read().await;
+        if conn.health.state == ConnectionState::Reconnecting {
+            return;
+        }
+        let result = conn.client
+            .send(ClientRpcRequest::DeleteKey {
+                key: key.to_string(),
+            })
+            .await;
+        if let Err(e) = result {
+            warn!("kv_delete({key}) failed: {e}");
+        }
+    }
+
     async fn kv_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
         // Try reconnect if in reconnecting state
         {
@@ -480,13 +496,62 @@ impl DriftStorage for AspenStorage {
         let record = HistoryRecord::from_track(track);
         let key = self.key(&format!("history:{now_ms:020}"));
         let value = serde_json::to_vec(&record)?;
-        // Server-side drift plugin handles dedup
         self.kv_set(&key, &value).await?;
+
         // Bump our sync state so we don't detect our own write as remote
         if let Ok(mut sync) = self.sync.lock() {
             sync.last_history_count += 1;
             sync.last_history_latest_hash = Some(Self::hash_bytes(key.as_bytes()));
         }
+
+        // ── Client-side dedup via drift-plugin ──────────────────────
+        // Scan recent entries and remove duplicates of this track
+        // within the 10s dedup window.
+        let prefix = self.key("history:");
+        if let Ok(entries) = self.kv_scan(&prefix, 100).await {
+            let plugin_record = drift_plugin::HistoryRecord {
+                track_id: record.track_id.clone(),
+                title: record.title.clone(),
+                artist: record.artist.clone(),
+                album: record.album.clone(),
+                duration_seconds: record.duration_seconds,
+                cover_art_id: record.cover_art_id.clone(),
+                service: record.service.clone(),
+                played_at_ms: record.played_at_ms,
+            };
+            let recent: Vec<(String, drift_plugin::HistoryRecord)> = entries
+                .iter()
+                .filter_map(|(k, v)| {
+                    serde_json::from_str::<drift_plugin::HistoryRecord>(v)
+                        .ok()
+                        .map(|r| (k.clone(), r))
+                })
+                .collect();
+            let to_delete = drift_plugin::dedup::find_duplicates(
+                &key,
+                &plugin_record,
+                &recent,
+                drift_plugin::DEFAULT_DEDUP_WINDOW_MS,
+            );
+            for dup_key in &to_delete {
+                self.kv_delete(dup_key).await;
+            }
+        }
+
+        // ── Client-side pruning via drift-plugin ────────────────────
+        // Keep history bounded at DEFAULT_MAX_HISTORY_ENTRIES.
+        if let Ok(all_entries) = self.kv_scan(&prefix, 1000).await {
+            let mut keys: Vec<String> = all_entries.into_iter().map(|(k, _)| k).collect();
+            keys.sort_by(|a, b| b.cmp(a)); // Newest first (keys are timestamps)
+            let to_prune = drift_plugin::prune::keys_to_prune(
+                &keys,
+                drift_plugin::DEFAULT_MAX_HISTORY_ENTRIES,
+            );
+            for prune_key in &to_prune {
+                self.kv_delete(prune_key).await;
+            }
+        }
+
         Ok(())
     }
 
@@ -556,8 +621,17 @@ impl DriftStorage for AspenStorage {
         match self.kv_get(&key).await? {
             Some(bytes) => {
                 let cached: CachedSearch = serde_json::from_slice(&bytes)?;
-                // TTL is enforced server-side by the plugin, but if we get
-                // a result back it's valid
+                // Check TTL client-side via drift-plugin
+                let now_ms = Utc::now().timestamp_millis() as u64;
+                if drift_plugin::ttl::is_expired(
+                    cached.cached_at_ms,
+                    now_ms,
+                    drift_plugin::DEFAULT_CACHE_TTL_MS,
+                ) {
+                    // Expired — delete stale cache entry and return miss
+                    self.kv_delete(&key).await;
+                    return Ok(None);
+                }
                 let results: SearchResults = serde_json::from_str(&cached.results_json)?;
                 Ok(Some(results))
             }

@@ -1526,6 +1526,7 @@ dependencies = [
  "chrono",
  "crossterm 0.28.1",
  "dirs",
+ "drift-plugin",
  "futures-util",
  "hostname",
  "id3",
@@ -1547,6 +1548,14 @@ dependencies = [
  "tracing",
  "urlencoding",
  "which",
+]
+
+[[package]]
+name = "drift-plugin"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

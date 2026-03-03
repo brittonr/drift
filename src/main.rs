@@ -283,6 +283,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         space_pressed: app.key_state.space_pressed,
         pending_key: app.key_state.pending_key,
         status_message: app.status_message.as_ref().map(|m| (m.message.clone(), m.is_error)),
+        backend_name: Some(app.storage.backend_name().to_string()),
     };
     render_status_bar(f, &status_state, main_chunks[chunk_index], &theme);
 
