@@ -1,0 +1,16 @@
+{
+  "name": "drift",
+  "version": "0.1.0",
+  "description": "Drift music player: history dedup, cache TTL, and history pruning",
+  "handles": ["WriteCommitted", "TimerFired"],
+  "priority": 950,
+  "kv_prefixes": ["drift:"],
+  "permissions": {
+    "kv_read": true,
+    "kv_write": true,
+    "hooks": true,
+    "timers": true
+  },
+  "tags": ["music", "drift", "dedup"],
+  "enabled": true
+}

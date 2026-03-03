@@ -14,6 +14,7 @@ use std::time::Instant;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
+use crate::storage::DriftStorage;
 use crate::tidal_db::TidalDb;
 
 use super::api::{SyncAlbum, SyncApiClient, SyncPlaylist, SyncTrack};
@@ -55,16 +56,24 @@ pub struct SyncEngine {
     stats: SyncStats,
     /// Track IDs processed this session (avoids re-checking redb).
     seen_this_run: HashSet<String>,
+    /// Optional Aspen storage for cross-device history sync.
+    storage: Option<Box<dyn DriftStorage>>,
 }
 
 impl SyncEngine {
-    pub fn new(api: SyncApiClient, db: TidalDb, config: SyncConfig) -> Self {
+    pub fn new(
+        api: SyncApiClient,
+        db: TidalDb,
+        config: SyncConfig,
+        storage: Option<Box<dyn DriftStorage>>,
+    ) -> Self {
         Self {
             api,
             db,
             config,
             stats: SyncStats::default(),
             seen_this_run: HashSet::new(),
+            storage,
         }
     }
 
@@ -480,6 +489,23 @@ impl SyncEngine {
                     &track.artist,
                     &track.title,
                 );
+
+                // Record to Aspen storage if connected
+                if let Some(ref storage) = self.storage {
+                    let drift_track = crate::service::Track {
+                        id: track.id.clone(),
+                        title: track.title.clone(),
+                        artist: track.artist.clone(),
+                        album: track.album.clone(),
+                        duration_seconds: 0,
+                        cover_art: crate::service::CoverArt::None,
+                        service: crate::service::ServiceType::Tidal,
+                    };
+                    if let Err(e) = storage.record_play(&drift_track).await {
+                        eprintln!("    ⚠ Aspen sync: {}", e);
+                    }
+                }
+
                 self.seen_this_run.insert(track.id.clone());
 
                 true

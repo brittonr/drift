@@ -11,6 +11,8 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+use drift::config::Config;
+use drift::storage::DriftStorage;
 use drift::sync::{SyncApiClient, SyncConfig, SyncEngine};
 use drift::tidal_db::TidalDb;
 
@@ -98,9 +100,50 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Optionally connect to Aspen storage for cross-device sync
+    let aspen_storage: Option<Box<dyn DriftStorage>> = {
+        let drift_config = Config::load().unwrap_or_default();
+        if drift_config.storage.backend == "aspen" {
+            #[cfg(feature = "aspen")]
+            {
+                if let Some(ticket) = drift_config.storage.cluster_ticket.as_deref() {
+                    let user_id = drift_config
+                        .storage
+                        .user_id
+                        .unwrap_or_else(|| {
+                            hostname::get()
+                                .map(|h| h.to_string_lossy().into_owned())
+                                .unwrap_or_else(|_| "drift-sync".to_string())
+                        });
+                    println!("  Connecting to Aspen cluster as '{}'...", user_id);
+                    match drift::storage::aspen::AspenStorage::connect(ticket, &user_id).await {
+                        Ok(s) => {
+                            println!("  ✓ Connected to Aspen cluster");
+                            Some(Box::new(s) as Box<dyn DriftStorage>)
+                        }
+                        Err(e) => {
+                            println!("  ⚠ Aspen connection failed: {}, continuing local-only", e);
+                            None
+                        }
+                    }
+                } else {
+                    println!("  ⚠ Aspen backend configured but no cluster_ticket, skipping");
+                    None
+                }
+            }
+            #[cfg(not(feature = "aspen"))]
+            {
+                println!("  ⚠ Aspen backend configured but 'aspen' feature not enabled, skipping");
+                None
+            }
+        } else {
+            None
+        }
+    };
+
     // Run the sync
     let config = SyncConfig { output_dir };
-    let mut engine = SyncEngine::new(api, db, config);
+    let mut engine = SyncEngine::new(api, db, config, aspen_storage);
     engine.run().await?;
 
     Ok(())
