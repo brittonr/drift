@@ -457,8 +457,8 @@ fn test_get_playlist_new_tracks() -> Result<()> {
 
     let new_tracks = db.get_playlist_new_tracks("pl-1", &current_tracks)?;
     assert_eq!(new_tracks.len(), 2);
-    assert_eq!(new_tracks[0].track_id, "3");
-    assert_eq!(new_tracks[1].track_id, "4");
+    assert_eq!(new_tracks[0].id, "3");
+    assert_eq!(new_tracks[1].id, "4");
 
     Ok(())
 }
