@@ -339,11 +339,11 @@ fn test_timestamp_accuracy() -> Result<()> {
 }
 
 #[test]
-fn test_same_track_id_different_services_deduped() -> Result<()> {
+fn test_same_track_id_different_services_not_deduped() -> Result<()> {
     let db = HistoryDb::new_in_memory()?;
 
-    // HistoryDb deduplicates by track_id alone within the 10s window,
-    // regardless of service type. Same track_id = same track for dedup.
+    // HistoryDb deduplicates by (track_id, service) pair within the 10s window.
+    // Same track_id from different services are treated as distinct tracks.
     let tidal = create_test_track("same-id", "Song", "Artist", ServiceType::Tidal);
     let youtube = create_test_track("same-id", "Song", "Artist", ServiceType::YouTube);
 
@@ -351,9 +351,9 @@ fn test_same_track_id_different_services_deduped() -> Result<()> {
     std::thread::sleep(Duration::from_millis(10));
     db.record_play(&youtube)?;
 
-    // Second play is deduped because same track_id within 10s window
+    // Both entries kept because they're from different services
     let entries = db.get_recent(10)?;
-    assert_eq!(entries.len(), 1);
+    assert_eq!(entries.len(), 2);
 
     Ok(())
 }

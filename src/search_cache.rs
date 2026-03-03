@@ -111,6 +111,18 @@ impl SearchCache {
         age >= 0 && (age as u64) < self.ttl_seconds
     }
 
+    /// Create a SearchCache using a specific directory (for tests).
+    #[doc(hidden)]
+    pub fn new_in_dir(cache_dir: PathBuf, ttl_seconds: u64) -> Result<Self> {
+        std::fs::create_dir_all(&cache_dir)
+            .context("Failed to create search cache directory")?;
+        Ok(Self {
+            cache_dir,
+            entries: HashMap::new(),
+            ttl_seconds,
+        })
+    }
+
     fn cache_key(query: &str, service_filter: Option<ServiceType>) -> String {
         let normalized_query = query.trim().to_lowercase();
         let filter_str = service_filter

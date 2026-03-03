@@ -36,19 +36,25 @@ impl LocalStorage {
         })
     }
 
-    /// Create a LocalStorage instance for testing with isolated temp storage.
+    /// Create a LocalStorage backed by temp directories (for integration tests).
+    ///
+    /// Uses in-memory HistoryDb and a temp dir for search cache,
+    /// isolating tests from user data.
     #[doc(hidden)]
     pub fn new_for_test(cache_ttl_seconds: u64) -> Result<Self> {
-        let history = match HistoryDb::new_in_memory() {
-            Ok(db) => Some(Mutex::new(db)),
-            Err(e) => {
-                tracing::warn!("Could not initialize test history DB: {}", e);
-                None
-            }
-        };
-        let search_cache = SearchCache::new(cache_ttl_seconds)?;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+
+        let history = HistoryDb::new_in_memory()?;
+        let cache_dir = std::env::temp_dir().join(format!(
+            "drift-search-cache-test-{}-{}",
+            std::process::id(),
+            n
+        ));
+        let search_cache = SearchCache::new_in_dir(cache_dir, cache_ttl_seconds)?;
         Ok(Self {
-            history,
+            history: Some(Mutex::new(history)),
             search_cache: Mutex::new(search_cache),
         })
     }
