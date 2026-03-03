@@ -211,7 +211,8 @@ impl HistoryDb {
         Ok(())
     }
 
-    #[cfg(test)]
+    /// Create an in-memory test database (for integration tests).
+    #[doc(hidden)]
     pub fn new_in_memory() -> Result<Self> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
