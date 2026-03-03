@@ -35,6 +35,23 @@ impl LocalStorage {
             search_cache: Mutex::new(search_cache),
         })
     }
+
+    /// Create a LocalStorage instance for testing with isolated temp storage.
+    #[doc(hidden)]
+    pub fn new_for_test(cache_ttl_seconds: u64) -> Result<Self> {
+        let history = match HistoryDb::new_in_memory() {
+            Ok(db) => Some(Mutex::new(db)),
+            Err(e) => {
+                tracing::warn!("Could not initialize test history DB: {}", e);
+                None
+            }
+        };
+        let search_cache = SearchCache::new(cache_ttl_seconds)?;
+        Ok(Self {
+            history,
+            search_cache: Mutex::new(search_cache),
+        })
+    }
 }
 
 #[async_trait]

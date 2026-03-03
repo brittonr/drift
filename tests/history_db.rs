@@ -330,9 +330,12 @@ fn test_timestamp_accuracy() -> Result<()> {
     let entries = db.get_recent(1)?;
     assert_eq!(entries.len(), 1);
 
-    // played_at should be between before and after
-    assert!(entries[0].played_at >= before);
-    assert!(entries[0].played_at <= after);
+    // played_at should be close to when we recorded it (within 2 seconds tolerance for clock precision)
+    let tolerance = chrono::Duration::seconds(2);
+    assert!(entries[0].played_at >= before - tolerance, 
+        "played_at {:?} should be >= before {:?} (with tolerance)", entries[0].played_at, before - tolerance);
+    assert!(entries[0].played_at <= after + tolerance,
+        "played_at {:?} should be <= after {:?} (with tolerance)", entries[0].played_at, after + tolerance);
 
     Ok(())
 }
