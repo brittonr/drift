@@ -128,7 +128,7 @@ impl HistoryDb {
             for entry in range {
                 let (_, val) = entry?;
                 if let Ok(stored) = serde_json::from_slice::<StoredEntry>(val.value()) {
-                    if stored.track_id == track.id {
+                    if stored.track_id == track.id && stored.service == track.service.to_string() {
                         return Ok(()); // Dedup — skip
                     }
                 }
