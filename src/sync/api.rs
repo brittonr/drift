@@ -669,3 +669,323 @@ fn extract_dash_url(manifest_xml: &str) -> Option<String> {
     let end = manifest_xml[content_start..].find("</BaseURL>")?;
     Some(manifest_xml[content_start..content_start + end].to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_simple() {
+        assert_eq!(1 + 1, 2);
+    }
+
+    #[test]
+    fn test_extract_dash_url_simple() {
+        let manifest = r#"<?xml version="1.0"?>
+<MPD>
+  <Period>
+    <AdaptationSet>
+      <Representation>
+        <BaseURL>https://example.com/track.flac</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>"#;
+        
+        let url = extract_dash_url(manifest);
+        assert_eq!(url, Some("https://example.com/track.flac".to_string()));
+    }
+
+    #[test]
+    fn test_extract_dash_url_no_base_url() {
+        let manifest = r#"<?xml version="1.0"?><MPD></MPD>"#;
+        let url = extract_dash_url(manifest);
+        assert_eq!(url, None);
+    }
+
+    #[test]
+    fn test_extract_dash_url_incomplete() {
+        let manifest = r#"<BaseURL>https://example.com/track.flac"#;
+        let url = extract_dash_url(manifest);
+        assert_eq!(url, None);
+    }
+
+    #[test]
+    fn test_extract_dash_url_with_special_chars() {
+        let manifest = r#"<BaseURL>https://example.com/track?token=abc123&amp;format=flac</BaseURL>"#;
+        let url = extract_dash_url(manifest);
+        assert_eq!(
+            url,
+            Some("https://example.com/track?token=abc123&amp;format=flac".to_string())
+        );
+    }
+
+    #[test]
+    fn test_quality_cascade_order() {
+        // Ensure quality cascade tries best quality first
+        assert_eq!(QUALITY_CASCADE.len(), 4);
+        assert_eq!(QUALITY_CASCADE[0], "HI_RES_LOSSLESS");
+        assert_eq!(QUALITY_CASCADE[1], "HI_RES");
+        assert_eq!(QUALITY_CASCADE[2], "LOSSLESS");
+        assert_eq!(QUALITY_CASCADE[3], "HIGH");
+    }
+
+    #[test]
+    fn test_parse_sync_track_complete() {
+        let json = serde_json::json!({
+            "id": 123456,
+            "title": "Test Track",
+            "artist": {"name": "Test Artist"},
+            "album": {
+                "title": "Test Album",
+                "artist": {"name": "Album Artist"}
+            },
+            "duration": 240,
+            "trackNumber": 3,
+            "volumeNumber": 2
+        });
+
+        let track = parse_sync_track(&json).unwrap();
+        assert_eq!(track.id, "123456");
+        assert_eq!(track.title, "Test Track");
+        assert_eq!(track.artist, "Test Artist");
+        assert_eq!(track.album, "Test Album");
+        assert_eq!(track.album_artist, "Album Artist");
+        assert_eq!(track.duration_seconds, 240);
+        assert_eq!(track.track_number, 3);
+        assert_eq!(track.volume_number, 2);
+    }
+
+    #[test]
+    fn test_parse_sync_track_minimal() {
+        let json = serde_json::json!({
+            "id": 789,
+            "title": "Minimal Track",
+            "duration": 180
+        });
+
+        let track = parse_sync_track(&json).unwrap();
+        assert_eq!(track.id, "789");
+        assert_eq!(track.title, "Minimal Track");
+        assert_eq!(track.artist, "Unknown Artist");
+        assert_eq!(track.album, "Unknown Album");
+        assert_eq!(track.duration_seconds, 180);
+        assert_eq!(track.track_number, 0);
+        assert_eq!(track.volume_number, 1);
+    }
+
+    #[test]
+    fn test_parse_sync_track_artists_array() {
+        let json = serde_json::json!({
+            "id": 999,
+            "title": "Multi Artist Track",
+            "artists": [
+                {"name": "First Artist"},
+                {"name": "Second Artist"}
+            ],
+            "album": {"title": "Compilation"},
+            "duration": 200
+        });
+
+        let track = parse_sync_track(&json).unwrap();
+        assert_eq!(track.artist, "First Artist");
+    }
+
+    #[test]
+    fn test_parse_sync_track_missing_id() {
+        let json = serde_json::json!({
+            "title": "No ID Track",
+            "duration": 100
+        });
+
+        let track = parse_sync_track(&json);
+        assert!(track.is_none());
+    }
+
+    #[test]
+    fn test_parse_sync_track_missing_duration() {
+        let json = serde_json::json!({
+            "id": 111,
+            "title": "No Duration Track"
+        });
+
+        let track = parse_sync_track(&json);
+        assert!(track.is_none());
+    }
+
+    #[test]
+    fn test_tidal_creds_serialization() {
+        let creds = TidalCreds {
+            access_token: "access123".to_string(),
+            refresh_token: "refresh456".to_string(),
+            token_type: "Bearer".to_string(),
+            user_id: 12345,
+            expires_at: None,
+        };
+
+        let json = serde_json::to_string(&creds).unwrap();
+        assert!(json.contains("access123"));
+        assert!(json.contains("refresh456"));
+        assert!(json.contains("12345"));
+
+        let deserialized: TidalCreds = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.access_token, "access123");
+        assert_eq!(deserialized.user_id, 12345);
+    }
+
+    #[test]
+    fn test_tidal_creds_with_expiry() {
+        let now = chrono::Utc::now();
+        let creds = TidalCreds {
+            access_token: "token".to_string(),
+            refresh_token: "refresh".to_string(),
+            token_type: "Bearer".to_string(),
+            user_id: 999,
+            expires_at: Some(now),
+        };
+
+        let json = serde_json::to_string(&creds).unwrap();
+        let deserialized: TidalCreds = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.expires_at.is_some());
+    }
+
+    #[test]
+    fn test_load_creds_from_valid_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let creds_path = temp_dir.path().join("credentials.json");
+        
+        let creds = TidalCreds {
+            access_token: "test_access".to_string(),
+            refresh_token: "test_refresh".to_string(),
+            token_type: "Bearer".to_string(),
+            user_id: 54321,
+            expires_at: None,
+        };
+        
+        let json = serde_json::to_string_pretty(&creds).unwrap();
+        fs::write(&creds_path, json).unwrap();
+        
+        let loaded = SyncApiClient::load_creds_from(&creds_path).unwrap();
+        assert_eq!(loaded.access_token, "test_access");
+        assert_eq!(loaded.refresh_token, "test_refresh");
+        assert_eq!(loaded.user_id, 54321);
+    }
+
+    #[test]
+    fn test_load_creds_from_nonexistent_file() {
+        let path = PathBuf::from("/nonexistent/path/credentials.json");
+        let result = SyncApiClient::load_creds_from(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_creds_from_invalid_json() {
+        let temp_dir = TempDir::new().unwrap();
+        let creds_path = temp_dir.path().join("bad.json");
+        fs::write(&creds_path, "{ invalid json }").unwrap();
+        
+        let result = SyncApiClient::load_creds_from(&creds_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_api_error_display() {
+        let forbidden = ApiError::Forbidden("Track not available".to_string());
+        assert!(forbidden.to_string().contains("Forbidden"));
+        
+        let server = ApiError::ServerError("500 Internal Server Error".to_string());
+        assert!(server.to_string().contains("Server error"));
+        
+        let other = ApiError::Other(anyhow!("Generic error"));
+        assert!(other.to_string().contains("Generic error"));
+    }
+
+    #[test]
+    fn test_sync_album_construction() {
+        let album = SyncAlbum {
+            id: "12345".to_string(),
+            title: "Greatest Hits".to_string(),
+            artist: "Test Artist".to_string(),
+            num_tracks: 15,
+        };
+        
+        assert_eq!(album.id, "12345");
+        assert_eq!(album.num_tracks, 15);
+    }
+
+    #[test]
+    fn test_sync_track_construction() {
+        let track = SyncTrack {
+            id: "98765".to_string(),
+            title: "Test Song".to_string(),
+            artist: "Artist Name".to_string(),
+            album: "Album Name".to_string(),
+            album_artist: "Album Artist".to_string(),
+            duration_seconds: 210,
+            track_number: 5,
+            volume_number: 1,
+        };
+        
+        assert_eq!(track.id, "98765");
+        assert_eq!(track.track_number, 5);
+        assert_eq!(track.volume_number, 1);
+    }
+
+    #[test]
+    fn test_sync_playlist_construction() {
+        let playlist = SyncPlaylist {
+            id: "playlist-uuid".to_string(),
+            title: "My Favorites".to_string(),
+            num_tracks: 50,
+        };
+        
+        assert_eq!(playlist.id, "playlist-uuid");
+        assert_eq!(playlist.num_tracks, 50);
+    }
+
+    #[test]
+    fn test_constants_are_valid() {
+        assert!(!API_BASE.is_empty());
+        assert!(API_BASE.starts_with("https://"));
+        assert!(!AUTH_URL.is_empty());
+        assert!(AUTH_URL.starts_with("https://"));
+        assert!(!CLIENT_ID.is_empty());
+        assert_eq!(COUNTRY, "US");
+        assert!(PAGE_SIZE > 0);
+        assert!(REQUEST_DELAY.as_millis() > 0);
+        assert!(DOWNLOAD_DELAY.as_millis() > 0);
+        assert!(RETRY_ATTEMPTS > 0);
+        assert_eq!(RETRY_BACKOFF_SECS.len(), 3);
+    }
+
+    #[test]
+    fn test_user_id_accessor() {
+        let creds = TidalCreds {
+            access_token: "token".to_string(),
+            refresh_token: "refresh".to_string(),
+            token_type: "Bearer".to_string(),
+            user_id: 99999,
+            expires_at: None,
+        };
+        
+        let client = SyncApiClient::new(creds, PathBuf::from("/tmp/test.json"));
+        assert_eq!(client.user_id(), 99999);
+    }
+
+    #[test]
+    fn test_download_delay() {
+        let creds = TidalCreds {
+            access_token: "token".to_string(),
+            refresh_token: "refresh".to_string(),
+            token_type: "Bearer".to_string(),
+            user_id: 1,
+            expires_at: None,
+        };
+        
+        let client = SyncApiClient::new(creds, PathBuf::from("/tmp/test.json"));
+        let delay = client.download_delay();
+        assert_eq!(delay, DOWNLOAD_DELAY);
+    }
+}

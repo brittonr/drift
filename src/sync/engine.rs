@@ -674,3 +674,374 @@ fn fmt_bytes(n: u64) -> String {
     }
     format!("{:.1} PB", n)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_sync_config_default() {
+        let config = SyncConfig::default();
+        assert!(config.output_dir.ends_with("Music/Tidal") || 
+                config.output_dir.ends_with("Music\\Tidal"));
+    }
+
+    #[test]
+    fn test_sanitize_basic() {
+        assert_eq!(sanitize("Normal Name"), "Normal Name");
+        assert_eq!(sanitize("Album 2023"), "Album 2023");
+        assert_eq!(sanitize("Name-with-dash"), "Name-with-dash");
+    }
+
+    #[test]
+    fn test_sanitize_forbidden_chars() {
+        assert_eq!(sanitize("Track: The Beginning"), "Track_ The Beginning");
+        assert_eq!(sanitize("Artist/Band"), "Artist_Band");
+        assert_eq!(sanitize("File<>Name"), "File__Name");
+        assert_eq!(sanitize("Track|Mix"), "Track_Mix");
+        assert_eq!(sanitize("Song?"), "Song_");
+        assert_eq!(sanitize("Track*Name"), "Track_Name");
+        assert_eq!(sanitize("Path\\Name"), "Path_Name");
+        assert_eq!(sanitize("Quote\"Name"), "Quote_Name");
+    }
+
+    #[test]
+    fn test_sanitize_dots_and_spaces() {
+        assert_eq!(sanitize("  Name with spaces  "), "Name with spaces");
+        assert_eq!(sanitize("...dots..."), "dots");
+        assert_eq!(sanitize(". . ."), "_"); // All dots and spaces trim to empty
+        assert_eq!(sanitize("   "), "_");
+    }
+
+    #[test]
+    fn test_sanitize_empty_and_edge_cases() {
+        assert_eq!(sanitize(""), "_");
+        assert_eq!(sanitize("   "), "_");
+        assert_eq!(sanitize("..."), "_");
+        assert_eq!(sanitize("."), "_");
+    }
+
+    #[test]
+    fn test_sanitize_unicode() {
+        assert_eq!(sanitize("Café"), "Café");
+        assert_eq!(sanitize("日本語"), "日本語");
+        assert_eq!(sanitize("Émilie"), "Émilie");
+        assert_eq!(sanitize("Pokémon"), "Pokémon");
+    }
+
+    #[test]
+    fn test_sanitize_mixed() {
+        assert_eq!(
+            sanitize("Track: \"Best of 2023\" (Remix)"),
+            "Track_ _Best of 2023_ (Remix)"
+        );
+        assert_eq!(
+            sanitize("Artist - Album / Track #1"),
+            "Artist - Album _ Track #1"
+        );
+    }
+
+    #[test]
+    fn test_file_extension_flac() {
+        assert_eq!(file_extension("FLAC"), "flac");
+        assert_eq!(file_extension("flac"), "flac");
+        assert_eq!(file_extension("LOSSLESS"), "flac");
+        assert_eq!(file_extension("HI_RES_LOSSLESS"), "flac");
+        assert_eq!(file_extension("HI_RES"), "flac");
+    }
+
+    #[test]
+    fn test_file_extension_m4a() {
+        assert_eq!(file_extension("AAC"), "m4a");
+        assert_eq!(file_extension("aac"), "m4a");
+        assert_eq!(file_extension("MP4"), "m4a");
+        assert_eq!(file_extension("mp4"), "m4a");
+    }
+
+    #[test]
+    fn test_file_extension_mp3() {
+        assert_eq!(file_extension("MP3"), "mp3");
+        assert_eq!(file_extension("mp3"), "mp3");
+    }
+
+    #[test]
+    fn test_file_extension_unknown_defaults_to_flac() {
+        assert_eq!(file_extension("UNKNOWN"), "flac");
+        assert_eq!(file_extension(""), "flac");
+        assert_eq!(file_extension("OGG"), "flac");
+    }
+
+    #[test]
+    fn test_file_extension_case_insensitive() {
+        assert_eq!(file_extension("FLaC"), "flac");
+        assert_eq!(file_extension("AaC"), "m4a");
+        assert_eq!(file_extension("Mp3"), "mp3");
+    }
+
+    #[test]
+    fn test_hash_file_basic() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(b"test content").unwrap();
+        temp_file.flush().unwrap();
+        
+        let hash = hash_file(temp_file.path()).unwrap();
+        assert_eq!(hash.len(), 64); // BLAKE3 produces 32 bytes = 64 hex chars
+        
+        // Hash should be deterministic
+        let hash2 = hash_file(temp_file.path()).unwrap();
+        assert_eq!(hash, hash2);
+    }
+
+    #[test]
+    fn test_hash_file_empty() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let hash = hash_file(temp_file.path()).unwrap();
+        assert_eq!(hash.len(), 64);
+        
+        // BLAKE3 hash of empty file
+        let expected = blake3::hash(b"").to_hex().to_string();
+        assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn test_hash_file_large() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        // Write more than the 64KB buffer size to test streaming
+        let large_data = vec![0u8; 150_000];
+        temp_file.write_all(&large_data).unwrap();
+        temp_file.flush().unwrap();
+        
+        let hash = hash_file(temp_file.path()).unwrap();
+        assert_eq!(hash.len(), 64);
+    }
+
+    #[test]
+    fn test_hash_file_different_content() {
+        let mut file1 = NamedTempFile::new().unwrap();
+        file1.write_all(b"content A").unwrap();
+        file1.flush().unwrap();
+        
+        let mut file2 = NamedTempFile::new().unwrap();
+        file2.write_all(b"content B").unwrap();
+        file2.flush().unwrap();
+        
+        let hash1 = hash_file(file1.path()).unwrap();
+        let hash2 = hash_file(file2.path()).unwrap();
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_file_nonexistent() {
+        let result = hash_file(Path::new("/nonexistent/file.txt"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fmt_bytes_bytes() {
+        assert_eq!(fmt_bytes(0), "0.0 B");
+        assert_eq!(fmt_bytes(1), "1.0 B");
+        assert_eq!(fmt_bytes(999), "999.0 B");
+    }
+
+    #[test]
+    fn test_fmt_bytes_kilobytes() {
+        assert_eq!(fmt_bytes(1024), "1.0 KB");
+        assert_eq!(fmt_bytes(2048), "2.0 KB");
+        assert_eq!(fmt_bytes(1536), "1.5 KB");
+        assert_eq!(fmt_bytes(102400), "100.0 KB");
+    }
+
+    #[test]
+    fn test_fmt_bytes_megabytes() {
+        assert_eq!(fmt_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(fmt_bytes(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(fmt_bytes(1536 * 1024), "1.5 MB");
+    }
+
+    #[test]
+    fn test_fmt_bytes_gigabytes() {
+        assert_eq!(fmt_bytes(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(fmt_bytes(10 * 1024 * 1024 * 1024), "10.0 GB");
+        assert_eq!(fmt_bytes(1536 * 1024 * 1024), "1.5 GB");
+    }
+
+    #[test]
+    fn test_fmt_bytes_terabytes() {
+        assert_eq!(fmt_bytes(1024u64 * 1024 * 1024 * 1024), "1.0 TB");
+        assert_eq!(fmt_bytes(5 * 1024u64 * 1024 * 1024 * 1024), "5.0 TB");
+    }
+
+    #[test]
+    fn test_fmt_bytes_petabytes() {
+        assert_eq!(fmt_bytes(1024u64 * 1024 * 1024 * 1024 * 1024), "1.0 PB");
+    }
+
+    #[test]
+    fn test_fmt_bytes_precision() {
+        // Test that we get proper decimal formatting
+        assert_eq!(fmt_bytes(1500), "1.5 KB");
+        assert_eq!(fmt_bytes(1024 + 512), "1.5 KB");
+        assert_eq!(fmt_bytes(2560), "2.5 KB");
+    }
+
+    #[test]
+    fn test_sync_stats_default() {
+        let stats = SyncStats::default();
+        assert_eq!(stats.downloaded, 0);
+        assert_eq!(stats.skipped, 0);
+        assert_eq!(stats.failed, 0);
+        assert_eq!(stats.total_bytes, 0);
+    }
+
+    #[test]
+    fn test_sync_album_fields() {
+        let album = SyncAlbum {
+            id: "album-123".to_string(),
+            title: "Test Album".to_string(),
+            artist: "Test Artist".to_string(),
+            num_tracks: 12,
+        };
+        
+        assert_eq!(album.id, "album-123");
+        assert_eq!(album.title, "Test Album");
+        assert_eq!(album.artist, "Test Artist");
+        assert_eq!(album.num_tracks, 12);
+    }
+
+    #[test]
+    fn test_sync_track_fields() {
+        let track = SyncTrack {
+            id: "track-456".to_string(),
+            title: "Test Track".to_string(),
+            artist: "Track Artist".to_string(),
+            album: "Track Album".to_string(),
+            album_artist: "Album Artist".to_string(),
+            duration_seconds: 180,
+            track_number: 3,
+            volume_number: 1,
+        };
+        
+        assert_eq!(track.id, "track-456");
+        assert_eq!(track.title, "Test Track");
+        assert_eq!(track.artist, "Track Artist");
+        assert_eq!(track.album, "Track Album");
+        assert_eq!(track.album_artist, "Album Artist");
+        assert_eq!(track.duration_seconds, 180);
+        assert_eq!(track.track_number, 3);
+        assert_eq!(track.volume_number, 1);
+    }
+
+    #[test]
+    fn test_sync_playlist_fields() {
+        let playlist = SyncPlaylist {
+            id: "playlist-789".to_string(),
+            title: "My Playlist".to_string(),
+            num_tracks: 25,
+        };
+        
+        assert_eq!(playlist.id, "playlist-789");
+        assert_eq!(playlist.title, "My Playlist");
+        assert_eq!(playlist.num_tracks, 25);
+    }
+
+    // Test filename construction logic
+    #[test]
+    fn test_track_filename_construction() {
+        let track = SyncTrack {
+            id: "1".to_string(),
+            title: "Song: The Beginning".to_string(),
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            album_artist: "Album Artist".to_string(),
+            duration_seconds: 200,
+            track_number: 5,
+            volume_number: 1,
+        };
+        
+        let sanitized_title = sanitize(&track.title);
+        let expected_prefix = format!("{:02} - {}", track.track_number, sanitized_title);
+        assert_eq!(expected_prefix, "05 - Song_ The Beginning");
+    }
+
+    #[test]
+    fn test_track_path_construction() {
+        let artist = "The Beatles";
+        let album = "Abbey Road";
+        let track_title = "Come Together";
+        
+        let artist_dir = sanitize(artist);
+        let album_dir = sanitize(album);
+        let track_file = sanitize(track_title);
+        
+        assert_eq!(artist_dir, "The Beatles");
+        assert_eq!(album_dir, "Abbey Road");
+        assert_eq!(track_file, "Come Together");
+        
+        // Full path would be: output_dir / artist_dir / album_dir / "01 - track_file.flac"
+    }
+
+    #[test]
+    fn test_problematic_artist_names() {
+        // Real-world artist names that have caused issues
+        assert_eq!(sanitize("AC/DC"), "AC_DC");
+        assert_eq!(sanitize("R.E.M."), "R.E.M");
+        assert_eq!(sanitize("?uestlove"), "_uestlove");
+        assert_eq!(sanitize("Panic! at the Disco"), "Panic! at the Disco"); // ! is not forbidden
+    }
+
+    #[test]
+    fn test_problematic_album_names() {
+        assert_eq!(sanitize("What's Going On?"), "What's Going On_");
+        assert_eq!(sanitize("...And Justice for All"), "And Justice for All");
+        assert_eq!(sanitize("OK Computer"), "OK Computer");
+        assert_eq!(sanitize("The Dark Side of the Moon"), "The Dark Side of the Moon");
+    }
+
+    #[test]
+    fn test_codec_to_extension_mapping() {
+        // Test the codec mapping used in file extension determination
+        let codecs = vec![
+            ("HI_RES_LOSSLESS", "flac"),
+            ("HI_RES", "flac"),
+            ("LOSSLESS", "flac"),
+            ("AAC", "m4a"),
+            ("MP3", "mp3"),
+            ("DOLBY_ATMOS", "flac"), // Unknown should default to flac
+        ];
+        
+        for (codec, expected_ext) in codecs {
+            assert_eq!(file_extension(codec), expected_ext);
+        }
+    }
+
+    #[test]
+    fn test_track_number_formatting() {
+        // Test zero-padding logic
+        assert_eq!(format!("{:02}", 1), "01");
+        assert_eq!(format!("{:02}", 9), "09");
+        assert_eq!(format!("{:02}", 10), "10");
+        assert_eq!(format!("{:02}", 99), "99");
+        assert_eq!(format!("{:02}", 100), "100"); // Still works for triple digits
+    }
+
+    #[test]
+    fn test_volume_number_in_filename() {
+        // Multi-disc albums should use disc/volume number
+        let track = SyncTrack {
+            id: "1".to_string(),
+            title: "Track".to_string(),
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            album_artist: "Album Artist".to_string(),
+            duration_seconds: 200,
+            track_number: 3,
+            volume_number: 2,
+        };
+        
+        assert_eq!(track.volume_number, 2);
+        // The actual implementation would need to use volume_number in path construction
+        // e.g., "Disc 2/03 - Track.flac"
+    }
+}

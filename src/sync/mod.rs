@@ -11,3 +11,11 @@ pub mod engine;
 
 pub use api::SyncApiClient;
 pub use engine::{SyncConfig, SyncEngine};
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_sync_mod() {
+        assert_eq!(2 + 2, 4);
+    }
+}
