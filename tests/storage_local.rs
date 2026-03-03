@@ -4,8 +4,6 @@
 //! the actual I/O path works correctly.
 
 use anyhow::Result;
-use chrono::Utc;
-use drift::history_db::HistoryEntry;
 use drift::queue_persistence::PersistedQueue;
 use drift::search::SearchHistory;
 use drift::service::{Album, Artist, CoverArt, SearchResults, ServiceType, Track};
@@ -160,8 +158,8 @@ async fn test_save_and_load_queue_roundtrip() -> Result<()> {
     let track2 = create_test_track("2", "Queue Track 2", "Artist", ServiceType::YouTube);
 
     let mut queue = PersistedQueue::new();
-    queue.tracks.push(track1.into());
-    queue.tracks.push(track2.into());
+    queue.tracks.push((&track1).into());
+    queue.tracks.push((&track2).into());
     queue.current_position = Some(1);
     queue.elapsed_seconds = Some(45);
 
