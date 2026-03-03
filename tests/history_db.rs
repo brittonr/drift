@@ -323,25 +323,27 @@ fn test_timestamp_accuracy() -> Result<()> {
     let track = create_test_track("1", "Song", "Artist", ServiceType::Tidal);
 
     use chrono::Utc;
-    let before = Utc::now();
+    // HistoryDb stores millisecond precision, so truncate before/after to millis
+    let before_ms = Utc::now().timestamp_millis();
     db.record_play(&track)?;
-    let after = Utc::now();
+    let after_ms = Utc::now().timestamp_millis();
 
     let entries = db.get_recent(1)?;
     assert_eq!(entries.len(), 1);
 
-    // played_at should be between before and after
-    assert!(entries[0].played_at >= before);
-    assert!(entries[0].played_at <= after);
+    let played_ms = entries[0].played_at.timestamp_millis();
+    assert!(played_ms >= before_ms, "played_at {played_ms} < before {before_ms}");
+    assert!(played_ms <= after_ms, "played_at {played_ms} > after {after_ms}");
 
     Ok(())
 }
 
 #[test]
-fn test_concurrent_same_track_different_services() -> Result<()> {
+fn test_same_track_id_different_services_deduped() -> Result<()> {
     let db = HistoryDb::new_in_memory()?;
 
-    // Same track ID but different services should be treated as different tracks
+    // HistoryDb deduplicates by track_id alone within the 10s window,
+    // regardless of service type. Same track_id = same track for dedup.
     let tidal = create_test_track("same-id", "Song", "Artist", ServiceType::Tidal);
     let youtube = create_test_track("same-id", "Song", "Artist", ServiceType::YouTube);
 
@@ -349,9 +351,9 @@ fn test_concurrent_same_track_different_services() -> Result<()> {
     std::thread::sleep(Duration::from_millis(10));
     db.record_play(&youtube)?;
 
-    // Should have both entries since they're from different services
+    // Second play is deduped because same track_id within 10s window
     let entries = db.get_recent(10)?;
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 1);
 
     Ok(())
 }

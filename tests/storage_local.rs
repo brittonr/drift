@@ -52,14 +52,14 @@ fn create_search_results(num_tracks: usize, num_albums: usize, num_artists: usiz
 
 #[tokio::test]
 async fn test_backend_name() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
     assert_eq!(storage.backend_name(), "local");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_record_play_and_get_history_roundtrip() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let track = create_test_track("12345", "Test Song", "Test Artist", ServiceType::Tidal);
 
@@ -80,7 +80,7 @@ async fn test_record_play_and_get_history_roundtrip() -> Result<()> {
 
 #[tokio::test]
 async fn test_history_ordering_most_recent_first() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     // Record three plays with small delays to ensure different timestamps
     let track1 = create_test_track("1", "First Song", "Artist", ServiceType::Tidal);
@@ -110,7 +110,7 @@ async fn test_history_ordering_most_recent_first() -> Result<()> {
 
 #[tokio::test]
 async fn test_history_dedup_within_10_seconds() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let track = create_test_track("12345", "Same Song", "Artist", ServiceType::Tidal);
 
@@ -129,7 +129,7 @@ async fn test_history_dedup_within_10_seconds() -> Result<()> {
 
 #[tokio::test]
 async fn test_history_allows_duplicate_after_dedup_window() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let track = create_test_track("12345", "Same Song", "Artist", ServiceType::Tidal);
 
@@ -152,7 +152,7 @@ async fn test_history_allows_duplicate_after_dedup_window() -> Result<()> {
 
 #[tokio::test]
 async fn test_save_and_load_queue_roundtrip() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let track1 = create_test_track("1", "Queue Track 1", "Artist", ServiceType::Tidal);
     let track2 = create_test_track("2", "Queue Track 2", "Artist", ServiceType::YouTube);
@@ -182,7 +182,7 @@ async fn test_save_and_load_queue_roundtrip() -> Result<()> {
 
 #[tokio::test]
 async fn test_load_queue_returns_none_when_empty() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     // Without saving anything, load should return None
     let loaded = storage.load_queue().await?;
@@ -193,7 +193,7 @@ async fn test_load_queue_returns_none_when_empty() -> Result<()> {
 
 #[tokio::test]
 async fn test_cache_search_and_get_cached_search_roundtrip() -> Result<()> {
-    let storage = LocalStorage::new(3600)?; // 1 hour TTL
+    let storage = LocalStorage::new_for_test(3600)?; // 1 hour TTL
 
     let query = "test query";
     let results = create_search_results(5, 3, 2);
@@ -215,7 +215,7 @@ async fn test_cache_search_and_get_cached_search_roundtrip() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_cache_miss_returns_none() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     // Query that was never cached
     let cached = storage.get_cached_search("unknown query", None).await?;
@@ -226,7 +226,7 @@ async fn test_search_cache_miss_returns_none() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_cache_with_service_filter() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let query = "filtered query";
     let results = create_search_results(3, 0, 0);
@@ -251,7 +251,7 @@ async fn test_search_cache_with_service_filter() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_cache_expired_returns_none() -> Result<()> {
-    let storage = LocalStorage::new(1)?; // 1 second TTL
+    let storage = LocalStorage::new_for_test(1)?; // 1 second TTL
 
     let query = "expiring query";
     let results = create_search_results(2, 0, 0);
@@ -274,7 +274,7 @@ async fn test_search_cache_expired_returns_none() -> Result<()> {
 
 #[tokio::test]
 async fn test_save_and_load_search_history() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let mut history = SearchHistory::new(10);
     history.add("first query", 5);
@@ -297,7 +297,7 @@ async fn test_save_and_load_search_history() -> Result<()> {
 
 #[tokio::test]
 async fn test_load_search_history_returns_empty_when_none() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let loaded = storage.load_search_history(10).await?;
     assert_eq!(loaded.entries.len(), 0);
@@ -307,7 +307,7 @@ async fn test_load_search_history_returns_empty_when_none() -> Result<()> {
 
 #[tokio::test]
 async fn test_multiple_sequential_operations() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     // Record multiple plays
     for i in 1..=5 {
@@ -352,7 +352,7 @@ async fn test_multiple_sequential_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_history_with_different_services() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let tidal_track = create_test_track("1", "Tidal Song", "Artist", ServiceType::Tidal);
     let youtube_track = create_test_track("2", "YouTube Song", "Artist", ServiceType::YouTube);
@@ -375,7 +375,7 @@ async fn test_history_with_different_services() -> Result<()> {
 
 #[tokio::test]
 async fn test_history_limit() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     // Record 20 plays
     for i in 1..=20 {
@@ -396,7 +396,7 @@ async fn test_history_limit() -> Result<()> {
 
 #[tokio::test]
 async fn test_unicode_in_track_metadata() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let track = Track {
         id: "unicode-1".to_string(),
@@ -421,7 +421,7 @@ async fn test_unicode_in_track_metadata() -> Result<()> {
 
 #[tokio::test]
 async fn test_empty_queue() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let empty_queue = PersistedQueue::new();
     storage.save_queue(&empty_queue).await?;
@@ -439,7 +439,7 @@ async fn test_empty_queue() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_cache_case_insensitive() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let results = create_search_results(3, 0, 0);
     storage.cache_search("Hello World", None, &results).await?;
@@ -458,7 +458,7 @@ async fn test_search_cache_case_insensitive() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_cache_whitespace_normalization() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     let results = create_search_results(2, 0, 0);
     storage.cache_search("test query", None, &results).await?;
@@ -475,7 +475,7 @@ async fn test_search_cache_whitespace_normalization() -> Result<()> {
 
 #[tokio::test]
 async fn test_overwrite_queue() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     // Save initial queue
     let track1 = create_test_track("1", "First Track", "Artist", ServiceType::Tidal);
@@ -504,7 +504,7 @@ async fn test_overwrite_queue() -> Result<()> {
 
 #[tokio::test]
 async fn test_poll_changes_returns_empty() -> Result<()> {
-    let storage = LocalStorage::new(3600)?;
+    let storage = LocalStorage::new_for_test(3600)?;
 
     // LocalStorage should always return empty changes
     let changes = storage.poll_changes().await?;
