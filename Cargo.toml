@@ -45,6 +45,9 @@ rand = "0.8"
 # Embedded key-value store for tidal-dl download history
 redb = "2"
 
+# Content-addressed hashing (for sync download dedup)
+blake3 = "1"
+
 # HTML scraping (for Bandcamp search)
 scraper = "0.20"
 urlencoding = "2"
@@ -77,3 +80,7 @@ path = "src/main.rs"
 [[bin]]
 name = "tidal-db"
 path = "src/bin/tidal_db.rs"
+
+[[bin]]
+name = "drift-sync"
+path = "src/bin/sync.rs"

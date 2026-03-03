@@ -1522,6 +1522,7 @@ dependencies = [
  "aspen-client-api",
  "async-trait",
  "base64 0.21.7",
+ "blake3",
  "chrono",
  "crossterm 0.28.1",
  "dirs",
