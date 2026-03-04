@@ -66,7 +66,26 @@
             lockFile = ./Cargo.lock;
           };
 
+          # Strip optional aspen deps — they live outside this repo
+          # (../aspen/) and aren't needed for default features.
+          postPatch = ''
+            sed -i '/^aspen-client/d' Cargo.toml
+            sed -i '/^aspen = /d' Cargo.toml
+          '';
+
           inherit nativeBuildInputs buildInputs;
+        };
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        # NixOS VM integration tests (Linux only, require KVM)
+        checks = {
+          mpd-integration = import ./tests/nixos/mpd-integration.nix {
+            inherit pkgs;
+            drift = self.packages.${system}.default;
+          };
+          remote-mpd = import ./tests/nixos/remote-mpd.nix {
+            inherit pkgs;
+            drift = self.packages.${system}.default;
+          };
         };
       });
 }
