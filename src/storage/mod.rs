@@ -18,6 +18,17 @@ use crate::queue_persistence::PersistedQueue;
 use crate::search::SearchHistory;
 use crate::service::{SearchResults, ServiceType, Track};
 
+/// Reference to a blob in the distributed store.
+#[derive(Debug, Clone)]
+pub struct BlobRef {
+    /// BLAKE3 hash (hex-encoded).
+    pub hash: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// File format (e.g., "flac", "mp3").
+    pub format: String,
+}
+
 /// A remote change detected by `poll_changes`.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Used only with aspen feature
@@ -77,6 +88,31 @@ pub trait DriftStorage: Send + Sync {
 
     /// Load search history. Returns empty history on miss.
     async fn load_search_history(&self, max_size: usize) -> Result<SearchHistory>;
+
+    // ── Blob Storage ────────────────────────────────────────────────
+
+    /// Upload a downloaded file to the distributed blob store.
+    ///
+    /// Returns the BLAKE3 hash of the stored blob, or None if blob storage
+    /// is unavailable (local backend, disconnected, etc.).
+    async fn upload_blob(&self, _track_id: &str, _file_path: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// Check if a track's audio file is available in the distributed blob store.
+    ///
+    /// Returns the BLAKE3 hash and file size if the track has been uploaded
+    /// by any device in the cluster.
+    async fn has_blob(&self, _track_id: &str) -> Result<Option<BlobRef>> {
+        Ok(None)
+    }
+
+    /// Download a track's audio file from the distributed blob store.
+    ///
+    /// Returns the raw bytes of the file if found in the cluster.
+    async fn fetch_blob(&self, _track_id: &str) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
 
     // ── Sync ────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 use super::App;
 use super::state::ViewMode;
 use crate::download_db::DownloadStatus;
-use crate::downloads::DownloadEvent;
+use crate::downloads::{DownloadEvent, sanitize_filename};
 use crate::service::{MusicService, Track};
 use crate::ui::library::LibraryTab;
 use crate::ui::search::SearchTab;
@@ -307,6 +307,21 @@ impl App {
     }
 
     pub async fn process_downloads(&mut self) {
+        // Try to satisfy pending downloads from the cluster blob store first
+        if self.download_manager.is_some() {
+            let pending = self.download_manager.as_ref().unwrap()
+                .get_pending_downloads().unwrap_or_default();
+            if let Some(record) = pending.first() {
+                let record = record.clone();
+                if let Some(path) = self.try_blob_download(&record).await {
+                    self.add_debug(format!("Downloaded from cluster: {} → {}", record.title, path));
+                    self.refresh_download_list();
+                    return; // One at a time, check next tick
+                }
+            }
+        }
+
+        // Fall back to downloading from the music service
         if let Some(ref dm) = self.download_manager {
             match dm.process_next_download(&mut self.music_service, &mut self.debug_log).await {
                 Ok(processed) => {
@@ -358,11 +373,107 @@ impl App {
                     ));
                     needs_refresh = true;
                 }
+                DownloadEvent::BlobUploadReady { track_id, file_path } => {
+                    self.pending_blob_uploads.push((track_id, file_path));
+                }
             }
         }
 
         if needs_refresh {
             self.refresh_download_list();
         }
+    }
+
+    /// Upload completed downloads to the distributed blob store.
+    ///
+    /// Drains `pending_blob_uploads` and fires off uploads one at a time.
+    /// Failures are logged but don't affect local functionality.
+    pub async fn process_blob_uploads(&mut self) {
+        if self.pending_blob_uploads.is_empty() {
+            return;
+        }
+
+        let uploads: Vec<(String, String)> = std::mem::take(&mut self.pending_blob_uploads);
+        for (track_id, file_path) in uploads {
+            match self.storage.upload_blob(&track_id, &file_path).await {
+                Ok(Some(hash)) => {
+                    self.add_debug(format!("Uploaded to cluster: {} ({})", track_id, &hash[..12]));
+                }
+                Ok(None) => {
+                    // Blob storage unavailable (local backend or disconnected), silently skip
+                }
+                Err(e) => {
+                    self.add_debug(format!("Blob upload failed for {}: {}", track_id, e));
+                }
+            }
+        }
+    }
+
+    /// Try to download a track from the blob store instead of the music service.
+    ///
+    /// Returns the local file path if the blob was found and written to disk.
+    pub async fn try_blob_download(&mut self, record: &crate::download_db::DownloadRecord) -> Option<String> {
+        // Check if this track exists in the cluster
+        let blob_ref = match self.storage.has_blob(&record.track_id).await {
+            Ok(Some(r)) => r,
+            Ok(None) => return None,
+            Err(e) => {
+                self.add_debug(format!("Blob check failed for {}: {}", record.track_id, e));
+                return None;
+            }
+        };
+
+        self.add_debug(format!(
+            "Found {} in cluster ({}, {:.1} MB), fetching...",
+            record.title,
+            blob_ref.format,
+            blob_ref.size as f64 / (1024.0 * 1024.0),
+        ));
+
+        // Fetch the blob data
+        let data = match self.storage.fetch_blob(&record.track_id).await {
+            Ok(Some(d)) => d,
+            Ok(None) => {
+                self.add_debug(format!("Blob indexed but not available for {}", record.title));
+                return None;
+            }
+            Err(e) => {
+                self.add_debug(format!("Blob fetch failed for {}: {}", record.title, e));
+                return None;
+            }
+        };
+
+        // Write to the download path
+        let dm = self.download_manager.as_ref()?;
+        let track = Track::from(record);
+        let download_dir = dm.get_download_dir_path();
+        let artist = sanitize_filename(&track.artist);
+        let album = sanitize_filename(&track.album);
+        let title = sanitize_filename(&track.title);
+        let file_path = download_dir
+            .join(&artist)
+            .join(&album)
+            .join(format!("{}.{}", title, blob_ref.format));
+
+        if let Some(parent) = file_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                self.add_debug(format!("Failed to create dir for blob: {}", e));
+                return None;
+            }
+        }
+
+        if let Err(e) = std::fs::write(&file_path, &data) {
+            self.add_debug(format!("Failed to write blob to disk: {}", e));
+            return None;
+        }
+
+        // Mark as completed in the download database
+        let path_str = file_path.to_string_lossy().to_string();
+        if let Err(e) = dm.mark_download_completed(&record.track_id, &path_str) {
+            self.add_debug(format!("Failed to mark blob download complete: {}", e));
+            return None;
+        }
+
+        Some(path_str)
     }
 }

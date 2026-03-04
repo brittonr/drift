@@ -75,6 +75,9 @@ pub struct App {
     pub download_records: Vec<DownloadRecord>,
     pub downloads: DownloadsState,
 
+    // Blob uploads pending (track_id, file_path) — drained async in main loop
+    pub pending_blob_uploads: Vec<(String, String)>,
+
     // Library/Favorites
     pub library: LibraryState,
     pub favorite_tracks: Vec<Track>,
@@ -360,6 +363,7 @@ impl App {
                 download_counts: initial_download_counts,
                 ..DownloadsState::default()
             },
+            pending_blob_uploads: Vec::new(),
             library: LibraryState::default(),
             favorite_tracks: Vec::new(),
             favorite_albums: Vec::new(),

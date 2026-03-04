@@ -1,4 +1,4 @@
-//! Aspen distributed KV storage backend.
+//! Aspen distributed KV + blob storage backend.
 //!
 //! Stores drift data in an Aspen cluster over iroh QUIC:
 //!
@@ -7,7 +7,12 @@
 //! drift:{user}:queue                         → JSON PersistedQueue
 //! drift:{user}:search:{hash}               → JSON CachedSearch
 //! drift:{user}:search_history               → JSON SearchHistory
+//! drift:{user}:blob:{track_id}             → JSON BlobIndex
 //! ```
+//!
+//! Audio files downloaded from Tidal/YouTube/Bandcamp are uploaded to the
+//! cluster's content-addressed blob store (BLAKE3) and indexed in KV.
+//! Other devices can pull audio from the cluster instead of re-downloading.
 //!
 //! Dedup, pruning, and cache TTL are enforced client-side via the
 //! `drift_plugin` crate's pure functions. The same logic can also
@@ -26,10 +31,11 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use aspen_client::AspenClient;
+use aspen_client::AspenClientBlobExt;
 use aspen_client::ClientRpcRequest;
 use aspen_client::ClientRpcResponse;
 
-use super::{DriftStorage, SyncEvent};
+use super::{BlobRef, DriftStorage, SyncEvent};
 use crate::history_db::HistoryEntry;
 use crate::queue_persistence::PersistedQueue;
 use crate::search::SearchHistory;
@@ -485,6 +491,17 @@ struct CachedSearch {
     cached_at_ms: u64,
 }
 
+/// KV index entry mapping track_id → blob hash for downloaded audio files.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BlobIndex {
+    /// BLAKE3 hash of the blob (hex-encoded).
+    hash: String,
+    /// File size in bytes.
+    size: u64,
+    /// Audio format (e.g., "flac", "mp3", "m4a").
+    format: String,
+}
+
 #[async_trait]
 impl DriftStorage for AspenStorage {
     fn backend_name(&self) -> &str {
@@ -657,6 +674,113 @@ impl DriftStorage for AspenStorage {
                 Ok(history)
             }
             None => Ok(SearchHistory::new(max_size)),
+        }
+    }
+
+    async fn upload_blob(&self, track_id: &str, file_path: &str) -> Result<Option<String>> {
+        // Graceful degradation: skip upload if disconnected
+        {
+            let conn = self.connection.read().await;
+            if conn.health.state == ConnectionState::Reconnecting {
+                return Ok(None);
+            }
+        }
+
+        // Read file from disk
+        let data = tokio::fs::read(file_path)
+            .await
+            .with_context(|| format!("failed to read file for blob upload: {file_path}"))?;
+        let file_size = data.len() as u64;
+
+        // Extract format from file extension
+        let format = std::path::Path::new(file_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("unknown")
+            .to_lowercase();
+
+        // Upload to blob store
+        let conn = self.connection.read().await;
+        let result = conn.client.blobs().upload(&data).await
+            .context("blob upload failed")?;
+        let hash = result.hash;
+
+        info!(
+            track_id,
+            hash = %hash,
+            size = file_size,
+            format = %format,
+            is_new = result.was_new,
+            "uploaded audio to blob store"
+        );
+
+        // Protect from GC
+        let tag = format!("drift:{}:library", self.user_id);
+        if let Err(e) = conn.client.blobs().protect(&hash, &tag).await {
+            warn!(hash = %hash, "failed to protect blob from GC: {e}");
+        }
+        drop(conn);
+
+        // Store KV index: drift:{user}:blob:{track_id} → BlobIndex
+        let index = BlobIndex {
+            hash: hash.clone(),
+            size: file_size,
+            format,
+        };
+        let key = self.key(&format!("blob:{track_id}"));
+        let value = serde_json::to_vec(&index)?;
+        self.kv_set(&key, &value).await?;
+
+        Ok(Some(hash))
+    }
+
+    async fn has_blob(&self, track_id: &str) -> Result<Option<BlobRef>> {
+        let key = self.key(&format!("blob:{track_id}"));
+        match self.kv_get(&key).await? {
+            Some(bytes) => {
+                let index: BlobIndex = serde_json::from_slice(&bytes)?;
+                Ok(Some(BlobRef {
+                    hash: index.hash,
+                    size: index.size,
+                    format: index.format,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn fetch_blob(&self, track_id: &str) -> Result<Option<Vec<u8>>> {
+        // Look up the blob hash from KV index
+        let key = self.key(&format!("blob:{track_id}"));
+        let index: BlobIndex = match self.kv_get(&key).await? {
+            Some(bytes) => serde_json::from_slice(&bytes)?,
+            None => return Ok(None),
+        };
+
+        // Download the blob content
+        let conn = self.connection.read().await;
+        match conn.client.blobs().download(&index.hash).await {
+            Ok(Some(result)) => {
+                info!(
+                    track_id,
+                    hash = %index.hash,
+                    size = result.size_bytes,
+                    "fetched audio from blob store"
+                );
+                Ok(Some(result.data))
+            }
+            Ok(None) => {
+                warn!(
+                    track_id,
+                    hash = %index.hash,
+                    "blob indexed but not found in store (may need replication)"
+                );
+                Ok(None)
+            }
+            Err(e) => {
+                warn!(track_id, hash = %index.hash, "blob fetch failed: {e}");
+                Err(e)
+            }
         }
     }
 

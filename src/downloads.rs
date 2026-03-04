@@ -24,6 +24,8 @@ pub enum DownloadEvent {
     Failed { track_id: String, error: String },
     QueueUpdated,
     PlaylistSynced { playlist_id: String, name: String, new_tracks: usize },
+    /// A download completed and is ready for blob upload to the cluster.
+    BlobUploadReady { track_id: String, file_path: String },
 }
 
 // DownloadManager provides async download infrastructure, currently accessed via DownloadDb directly
@@ -298,6 +300,12 @@ impl DownloadManager {
         let path_str = file_path.to_string_lossy().to_string();
         self.db.mark_completed(&track.id, &path_str)?;
 
+        // Signal that this file is ready for blob upload to the cluster
+        let _ = self.event_tx.send(DownloadEvent::BlobUploadReady {
+            track_id: track.id.clone(),
+            file_path: path_str.clone(),
+        });
+
         Ok(path_str)
     }
 
@@ -352,6 +360,18 @@ impl DownloadManager {
 
         tag.write_to_path(path, Version::Id3v24)
             .context("Failed to write ID3 tags")?;
+        Ok(())
+    }
+
+    /// Get the download directory path (for blob downloads to write files).
+    pub fn get_download_dir_path(&self) -> &std::path::Path {
+        &self.download_dir
+    }
+
+    /// Mark a download as completed (used by blob fetch path).
+    pub fn mark_download_completed(&self, track_id: &str, file_path: &str) -> Result<()> {
+        self.db.mark_completed(track_id, file_path)?;
+        let _ = self.event_tx.send(DownloadEvent::QueueUpdated);
         Ok(())
     }
 
@@ -430,7 +450,7 @@ impl DownloadManager {
     }
 }
 
-fn sanitize_filename(name: &str) -> String {
+pub fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
