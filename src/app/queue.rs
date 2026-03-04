@@ -55,23 +55,36 @@ impl App {
         }
 
         let mut added = 0;
+        let mut local_count = 0;
         for pt in &persisted.tracks {
             let track = Track::from(pt);
-            match self.music_service.get_stream_url(&track.id).await {
-                Ok(url) => {
+            match self.resolve_play_url(&track).await {
+                Ok(Some(url)) => {
+                    let is_local = url.starts_with('/');
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add track {}: {}", track.title, e));
                     } else {
                         added += 1;
+                        if is_local { local_count += 1; }
                     }
                 }
+                Ok(None) => {
+                    // Offline and not downloaded — skip silently
+                }
                 Err(e) => {
-                    self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
+                    self.add_debug(format!("Failed to resolve {}: {}", track.title, e));
                 }
             }
         }
 
-        self.add_debug(format!("Restored {}/{} tracks to MPD", added, persisted.tracks.len()));
+        if local_count > 0 {
+            self.add_debug(format!(
+                "Restored {}/{} tracks ({} local files, {} streamed)",
+                added, persisted.tracks.len(), local_count, added - local_count
+            ));
+        } else {
+            self.add_debug(format!("Restored {}/{} tracks to MPD", added, persisted.tracks.len()));
+        }
 
         if let Some(pos) = persisted.current_position {
             if pos < added {
@@ -93,11 +106,11 @@ impl App {
     pub async fn add_track_to_queue(&mut self, track: Track) -> Result<()> {
         self.add_debug(format!("Adding to queue: {} - {}", track.artist, track.title));
 
-        self.add_debug(format!("Getting stream URL for track ID {}...", track.id));
-        let stream_url = match self.music_service.get_stream_url(&track.id).await {
-            Ok(url) => {
-                self.add_debug(format!("Got URL: {}...", &url[..50.min(url.len())]));
-                url
+        let play_url = match self.resolve_play_url(&track).await {
+            Ok(Some(url)) => url,
+            Ok(None) => {
+                self.set_status_error("Track not available offline".to_string());
+                return Ok(());
             }
             Err(e) => {
                 self.add_debug(format!("Failed to get URL: {}", e));
@@ -106,7 +119,7 @@ impl App {
         };
 
         self.add_debug("Adding to MPD queue...".to_string());
-        if let Err(e) = self.mpd_controller.add_track(&stream_url, &mut self.debug_log).await {
+        if let Err(e) = self.mpd_controller.add_track(&play_url, &mut self.debug_log).await {
             self.add_debug(format!("Add to MPD failed: {}", e));
             return Err(e);
         }
@@ -183,8 +196,8 @@ impl App {
         for (i, track) in tracks_to_add.iter().enumerate() {
             self.add_debug(format!("[{}/{}] {} - {}", i+1, tracks_to_add.len(), track.artist, track.title));
 
-            match self.music_service.get_stream_url(&track.id).await {
-                Ok(url) => {
+            match self.resolve_play_url(track).await {
+                Ok(Some(url)) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("  Failed to add: {}", e));
                     } else {
@@ -192,6 +205,7 @@ impl App {
                         added_count += 1;
                     }
                 }
+                Ok(None) => {} // offline, not downloaded — skip
                 Err(e) => {
                     self.add_debug(format!("  Failed to get URL: {}", e));
                 }
@@ -249,8 +263,8 @@ impl App {
         let mut added_count = 0;
 
         for track in &tracks {
-            match self.music_service.get_stream_url(&track.id).await {
-                Ok(url) => {
+            match self.resolve_play_url(track).await {
+                Ok(Some(url)) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add {}: {}", track.title, e));
                     } else {
@@ -258,6 +272,7 @@ impl App {
                         added_count += 1;
                     }
                 }
+                Ok(None) => {} // offline, not downloaded
                 Err(e) => {
                     self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
                 }
@@ -302,8 +317,8 @@ impl App {
         let mut added_count = 0;
 
         for track in &tracks {
-            match self.music_service.get_stream_url(&track.id).await {
-                Ok(url) => {
+            match self.resolve_play_url(track).await {
+                Ok(Some(url)) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add {}: {}", track.title, e));
                     } else {
@@ -311,6 +326,7 @@ impl App {
                         added_count += 1;
                     }
                 }
+                Ok(None) => {} // offline, not downloaded
                 Err(e) => {
                     self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
                 }
@@ -348,8 +364,8 @@ impl App {
         let mut added_count = 0;
 
         for track in &tracks {
-            match self.music_service.get_stream_url(&track.id).await {
-                Ok(url) => {
+            match self.resolve_play_url(track).await {
+                Ok(Some(url)) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add {}: {}", track.title, e));
                     } else {
@@ -357,6 +373,7 @@ impl App {
                         added_count += 1;
                     }
                 }
+                Ok(None) => {} // offline, not downloaded
                 Err(e) => {
                     self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
                 }
@@ -412,8 +429,8 @@ impl App {
         let mut added_count = 0;
 
         for track in &tracks {
-            match self.music_service.get_stream_url(&track.id).await {
-                Ok(url) => {
+            match self.resolve_play_url(track).await {
+                Ok(Some(url)) => {
                     if let Err(e) = self.mpd_controller.add_track(&url, &mut self.debug_log).await {
                         self.add_debug(format!("Failed to add {}: {}", track.title, e));
                     } else {
@@ -421,6 +438,7 @@ impl App {
                         added_count += 1;
                     }
                 }
+                Ok(None) => {} // offline, not downloaded
                 Err(e) => {
                     self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
                 }

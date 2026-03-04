@@ -25,26 +25,68 @@ pub struct Config {
 }
 
 /// Storage backend configuration
+///
+/// Local-first architecture: all reads and writes go to local storage first.
+/// When `sync_enabled = true` and an Aspen cluster ticket is provided,
+/// writes are replicated to the cluster in the background and remote
+/// changes are merged into local state via polling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StorageConfig {
-    /// Backend type: "local" or "aspen"
+    /// Backend type: "local" or "aspen" (deprecated — use sync_enabled instead).
+    /// Kept for backward compatibility. When backend = "aspen", implies sync_enabled = true.
     pub backend: String,
-    /// Aspen cluster ticket (required when backend = "aspen")
+    /// Enable cross-device sync via Aspen distributed KV.
+    /// When true, local storage is used for all reads/writes with background
+    /// replication to the Aspen cluster.
+    pub sync_enabled: bool,
+    /// Aspen cluster ticket (required when sync_enabled = true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster_ticket: Option<String>,
     /// User ID for Aspen key namespacing (default: hostname)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
+    /// Maximum pending write-ahead log entries (default: 1000)
+    pub wal_max_entries: usize,
+    /// Maximum age of WAL entries in days before pruning (default: 7)
+    pub wal_max_age_days: u32,
+    /// Metadata cache TTL in minutes (playlists, favorites, albums, artists).
+    /// Cached data is served immediately; stale data triggers background refresh.
+    pub metadata_cache_ttl_minutes: u64,
+    /// Prefer local files for playback when available (default: true).
+    /// When true, downloaded tracks are used instead of streaming, even when online.
+    pub prefer_local_files: bool,
 }
 
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             backend: "local".to_string(),
+            sync_enabled: false,
             cluster_ticket: None,
             user_id: None,
+            wal_max_entries: 1000,
+            wal_max_age_days: 7,
+            metadata_cache_ttl_minutes: 60,
+            prefer_local_files: true,
         }
+    }
+}
+
+impl StorageConfig {
+    /// Whether sync should be attempted. Handles backward compatibility
+    /// with the old `backend = "aspen"` config.
+    pub fn wants_sync(&self) -> bool {
+        self.sync_enabled || self.backend == "aspen"
+    }
+
+    /// Get the resolved user ID (config value or hostname fallback).
+    pub fn resolved_user_id(&self) -> String {
+        self.user_id.clone().unwrap_or_else(|| {
+            hostname::get()
+                .map(|h| h.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "drift".to_string())
+        })
     }
 }
 

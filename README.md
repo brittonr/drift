@@ -2,15 +2,18 @@
 
 A terminal music player for **Tidal**, **YouTube**, and **Bandcamp** with an MPD backend.
 
-Drift provides multi-service search, album radio, playlist management, download sync, and optional cross-device sync via Aspen distributed storage — all from a keyboard-driven TUI with album art, CAVA visualizer, and theming support.
+Drift is **local-first, multiplayer second**: everything works offline with local storage, and cross-device sync via Aspen is an optional layer on top — never a dependency.
 
 ## Features
 
+- **Local-first architecture** — all data in local redb/TOML/JSON, works fully offline, multiplayer sync optional
 - **Multi-service search** — unified search across Tidal, YouTube, and Bandcamp with fuzzy filtering (nucleo)
 - **Album radio** — auto-generate queues from similar tracks
 - **Playlist management** — create, rename, sync, and manage playlists across services
 - **Download management** — queue downloads, track progress, content-dedup via BLAKE3
-- **Cross-device sync** — optional sync of history, queue, and search cache via Aspen distributed KV
+- **Offline playback** — downloaded tracks are preferred automatically, queue restore works without network
+- **Cross-device sync** — optional background replication to Aspen distributed KV with CRDT merge
+- **Metadata cache** — playlists, favorites, albums, artists cached locally for instant offline access
 - **Album art** — sixel/kitty protocol image rendering in-terminal
 - **CAVA visualizer** — live audio visualizer integration
 - **Video mode** — YouTube video playback via mpv
@@ -96,9 +99,14 @@ fullscreen = false
 hwdec = "auto"
 
 [storage]
-backend = "local"            # "local" or "aspen"
-# cluster_ticket = "..."     # required for aspen backend
-# user_id = "hostname"       # defaults to hostname
+backend = "local"                # always local-first
+sync_enabled = false             # enable Aspen cross-device sync
+# cluster_ticket = "..."        # required when sync_enabled = true
+# user_id = "hostname"          # defaults to hostname
+prefer_local_files = true        # use downloaded files instead of streaming
+metadata_cache_ttl_minutes = 60  # how long cached playlists/favorites stay fresh
+wal_max_entries = 1000           # max pending sync operations
+wal_max_age_days = 7             # auto-prune old WAL entries
 
 [theme]
 # preset = "catppuccin-mocha"  # or: nord, dracula, gruvbox, solarized, tokyo-night
@@ -210,12 +218,24 @@ drift/
     └── drift-plugin/       # Server-side plugin logic (dedup, TTL, pruning)
 ```
 
-### Storage backends
+### Storage: local-first, multiplayer second
 
-The `DriftStorage` trait abstracts all persistence:
+```
+App reads/writes ──► LocalFirstStorage
+                     ├─ LocalStorage (redb)     ◄── all reads, all writes (always)
+                     ├─ MetadataCache (redb)     ◄── playlists, favorites, albums, artists
+                     ├─ WalManager (redb)        ◄── persistent write-ahead log for sync
+                     └─ AspenStorage (optional)  ◄── background replication via QUIC
+```
 
-- **`local`** — redb databases + JSON/TOML files in XDG directories. Fully offline, zero configuration.
-- **`aspen`** — Aspen distributed KV over iroh QUIC. Multi-device sync with automatic reconnection and write queuing during outages.
+The `DriftStorage` trait abstracts all persistence. `LocalFirstStorage` is the default backend:
+
+- **Every read** comes from local storage — never blocks on network
+- **Every write** goes to local first, then queued for remote replication via WAL
+- **Remote changes** are merged using CRDT semantics (Lamport clocks for queue, set-union for history)
+- **Pending operations** survive restart — the WAL is a redb database, not in-memory
+- **Metadata cache** stores playlists, favorites, albums, artists with TTL-based staleness
+- **Playback prefers local files** — downloaded tracks play instantly without API calls
 
 Key schema: `drift:{user}:history:{timestamp}`, `drift:{user}:queue`, `drift:{user}:search:{hash}`, `drift:{user}:search_history`
 

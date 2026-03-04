@@ -18,33 +18,21 @@ impl App {
             return self.play_track_video(track).await;
         }
 
-        // Check for offline mode - use local file if downloaded
-        let play_url = if self.downloads.offline_mode {
-            if let Some(ref dm) = self.download_manager {
-                if let Some(local_path) = dm.get_local_path(&track.id) {
-                    self.add_debug(format!("Offline mode: using local file {}", local_path));
-                    local_path
-                } else {
-                    self.add_debug("Offline mode: track not downloaded".to_string());
-                    self.set_status_error("Track not downloaded - disable offline mode or download first".to_string());
-                    return Ok(());
+        // Resolve to local file or stream URL (local-first: prefer downloaded files)
+        let play_url = match self.resolve_play_url(&track).await {
+            Ok(Some(url)) => {
+                if url.starts_with('/') {
+                    self.add_debug(format!("Using local file: {}", url));
                 }
-            } else {
-                self.set_status_error("Download manager not available".to_string());
+                url
+            }
+            Ok(None) => {
+                self.set_status_error("Track not available offline".to_string());
                 return Ok(());
             }
-        } else {
-            // Standard streaming - get URL from service
-            self.add_debug(format!("Getting stream URL for track ID {} ({})...", track.id, track.service));
-            match self.music_service.get_stream_url_for_track(&track).await {
-                Ok(url) => {
-                    self.add_debug(format!("Got URL: {}...", &url[..50.min(url.len())]));
-                    url
-                }
-                Err(e) => {
-                    self.add_debug(format!("Failed to get URL: {}", e));
-                    return Err(e);
-                }
+            Err(e) => {
+                self.add_debug(format!("Failed to get URL: {}", e));
+                return Err(e);
             }
         };
 
@@ -359,16 +347,17 @@ impl App {
 
         self.add_debug(format!("Radio: adding {} new tracks", new_tracks.len()));
 
-        // Add tracks to queue
+        // Add tracks to queue (prefer local files)
         let mut added = 0;
         for track in new_tracks {
-            match self.music_service.get_stream_url(&track.id).await {
-                Ok(url) => {
+            match self.resolve_play_url(&track).await {
+                Ok(Some(url)) => {
                     if self.mpd_controller.add_track(&url, &mut self.debug_log).await.is_ok() {
                         self.local_queue.push(track);
                         added += 1;
                     }
                 }
+                Ok(None) => {} // offline, skip
                 Err(e) => {
                     self.add_debug(format!("Radio: failed to get URL: {}", e));
                 }

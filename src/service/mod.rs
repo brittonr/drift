@@ -85,9 +85,7 @@ pub struct Track {
 }
 
 /// A playlist from any music service
-// Playlist fields are populated; description/service are for future filtering
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Playlist {
     pub id: String,
     pub title: String,

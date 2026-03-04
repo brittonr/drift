@@ -1,11 +1,20 @@
 //! Storage abstraction for Drift.
 //!
-//! - [`LocalStorage`]: redb + TOML + JSON (default, fully offline)
-//! - [`AspenStorage`]: Aspen distributed KV over iroh QUIC (multi-device sync)
+//! **Architecture: local-first, multiplayer second.**
 //!
-//! The `App` holds a `Box<dyn DriftStorage>` and all persistence goes through it.
+//! - [`LocalStorage`]: redb + TOML + JSON — fast, always-available local persistence
+//! - [`LocalFirstStorage`]: wraps LocalStorage + optional Aspen replication via WAL
+//! - [`MetadataCache`]: redb-backed cache for service API responses (playlists, favorites)
+//! - [`AspenStorage`]: Aspen distributed KV over iroh QUIC (used by replication task)
+//!
+//! All reads come from local storage. All writes go to local first, then queue
+//! for background replication. Remote changes are merged using CRDT semantics.
 
 pub mod local;
+pub mod local_first;
+pub mod merge;
+pub mod metadata_cache;
+pub mod wal;
 
 #[cfg(feature = "aspen")]
 pub mod aspen;

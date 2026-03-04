@@ -20,6 +20,7 @@ use crate::queue_persistence::PersistedQueue;
 use crate::search::{ResultScorer, SearchHistory};
 use crate::service::{Album, Artist, CoverArt, MixedPlaylistStorage, MultiServiceManager, MusicService, Playlist, SearchResults, Track};
 use crate::storage::DriftStorage;
+use crate::storage::metadata_cache::MetadataCache;
 use crate::downloads::{DownloadEvent, DownloadManager};
 use crate::video::MpvController;
 
@@ -92,8 +93,11 @@ pub struct App {
     // Playback history (cached from storage)
     pub history_entries: Vec<HistoryEntry>,
 
-    // Storage backend (local or aspen)
+    // Storage backend (local-first with optional remote sync)
     pub storage: Box<dyn DriftStorage>,
+
+    // Metadata cache for offline access to playlists, favorites, etc.
+    pub metadata_cache: MetadataCache,
 
     // Configuration
     pub config: Config,
@@ -169,17 +173,75 @@ impl App {
             &mut debug_log
         ).await?;
 
-        // Load initial playlists
-        debug_log.push_back("Fetching playlists...".to_string());
-        let playlists = music_service.get_playlists().await?;
-        debug_log.push_back(format!("Loaded {} playlists", playlists.len()));
+        // Initialize metadata cache (for offline access to playlists, favorites, etc.)
+        let metadata_cache_ttl = std::time::Duration::from_secs(
+            config.storage.metadata_cache_ttl_minutes * 60,
+        );
+        let metadata_cache = match MetadataCache::new(metadata_cache_ttl) {
+            Ok(mc) => {
+                debug_log.push_back("Metadata cache initialized".to_string());
+                mc
+            }
+            Err(e) => {
+                debug_log.push_back(format!("Metadata cache failed, using in-memory: {}", e));
+                MetadataCache::new_in_memory(metadata_cache_ttl)?
+            }
+        };
 
-        // Load tracks from first playlist if available
+        // Load playlists — try cache first, then API, so startup works offline
+        debug_log.push_back("Loading playlists...".to_string());
+        let playlists = match metadata_cache.get_playlists() {
+            Ok(Some(hit)) => {
+                let source = match hit.status {
+                    crate::storage::metadata_cache::CacheStatus::Fresh => "cache (fresh)",
+                    crate::storage::metadata_cache::CacheStatus::Stale => "cache (stale)",
+                };
+                debug_log.push_back(format!("Loaded {} playlists from {}", hit.data.len(), source));
+                // If stale, refresh from API in background later
+                hit.data
+            }
+            _ => {
+                // Cache miss — fetch from API
+                match music_service.get_playlists().await {
+                    Ok(pl) => {
+                        debug_log.push_back(format!("Loaded {} playlists from API", pl.len()));
+                        // Cache for next time
+                        if let Err(e) = metadata_cache.set_playlists(&pl) {
+                            debug_log.push_back(format!("Failed to cache playlists: {}", e));
+                        }
+                        pl
+                    }
+                    Err(e) => {
+                        debug_log.push_back(format!("Failed to load playlists: {}", e));
+                        Vec::new()
+                    }
+                }
+            }
+        };
+
+        // Load tracks from first playlist — cache-first
         let tracks = if !playlists.is_empty() {
-            debug_log.push_back(format!("Loading tracks from '{}'...", playlists[0].title));
-            let tracks = music_service.get_playlist_tracks(&playlists[0].id).await?;
-            debug_log.push_back(format!("Loaded {} tracks", tracks.len()));
-            tracks
+            let pid = &playlists[0].id;
+            match metadata_cache.get_playlist_tracks(pid) {
+                Ok(Some(hit)) => {
+                    debug_log.push_back(format!("Loaded {} tracks from cache", hit.data.len()));
+                    hit.data
+                }
+                _ => {
+                    debug_log.push_back(format!("Loading tracks from '{}'...", playlists[0].title));
+                    match music_service.get_playlist_tracks(pid).await {
+                        Ok(t) => {
+                            debug_log.push_back(format!("Loaded {} tracks", t.len()));
+                            let _ = metadata_cache.set_playlist_tracks(pid, &t);
+                            t
+                        }
+                        Err(e) => {
+                            debug_log.push_back(format!("Failed to load tracks: {}", e));
+                            Vec::new()
+                        }
+                    }
+                }
+            }
         } else {
             Vec::new()
         };
@@ -214,33 +276,31 @@ impl App {
         let album_art_cache = AlbumArtCache::new(config.ui.album_art_cache_size)?;
         debug_log.push_back(format!("Album art cache initialized (max {} images)", config.ui.album_art_cache_size));
 
-        // Initialize storage backend
-        let storage: Box<dyn crate::storage::DriftStorage> = if config.storage.backend == "aspen" {
-            #[cfg(feature = "aspen")]
-            {
-                let ticket = config.storage.cluster_ticket.as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("storage.cluster_ticket required when backend = \"aspen\""))?;
-                let user_id = config.storage.user_id.clone()
-                    .unwrap_or_else(|| hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_else(|_| "drift".to_string()));
-                debug_log.push_back(format!("Connecting to Aspen cluster as '{}'...", user_id));
-                match crate::storage::aspen::AspenStorage::connect(ticket, &user_id).await {
-                    Ok(s) => {
-                        debug_log.push_back("Connected to Aspen cluster".to_string());
-                        Box::new(s)
-                    }
-                    Err(e) => {
-                        debug_log.push_back(format!("Aspen connection failed, falling back to local: {}", e));
-                        Box::new(crate::storage::local::LocalStorage::new(config.search.cache_ttl_seconds)?)
-                    }
+        // Initialize storage backend — always local-first
+        debug_log.push_back("Initializing local-first storage...".to_string());
+        let storage: Box<dyn crate::storage::DriftStorage> = match
+            crate::storage::local_first::LocalFirstStorage::new(
+                &config.storage,
+                config.search.cache_ttl_seconds,
+            ).await
+        {
+            Ok(lfs) => {
+                let pending = lfs.pending_wal_count();
+                if pending > 0 {
+                    debug_log.push_back(format!("WAL: {} pending replication ops", pending));
                 }
+                if config.storage.wants_sync() {
+                    debug_log.push_back(format!(
+                        "Sync enabled (user: {})",
+                        config.storage.resolved_user_id()
+                    ));
+                }
+                Box::new(lfs)
             }
-            #[cfg(not(feature = "aspen"))]
-            {
-                debug_log.push_back("Aspen backend requested but 'aspen' feature not enabled, using local".to_string());
+            Err(e) => {
+                debug_log.push_back(format!("LocalFirstStorage failed, falling back to basic local: {}", e));
                 Box::new(crate::storage::local::LocalStorage::new(config.search.cache_ttl_seconds)?)
             }
-        } else {
-            Box::new(crate::storage::local::LocalStorage::new(config.search.cache_ttl_seconds)?)
         };
         debug_log.push_back(format!("Storage backend: {}", storage.backend_name()));
 
@@ -373,6 +433,7 @@ impl App {
             navigation_history: Vec::new(),
             history_entries,
             storage,
+            metadata_cache,
             config,
             config_mtime: Config::get_mtime(),
             show_help: false,
@@ -383,6 +444,44 @@ impl App {
             video_controller,
             last_playlist_sync: std::time::Instant::now(),
         })
+    }
+
+    /// Resolve a track to a playable URL, preferring local files when available.
+    ///
+    /// Priority:
+    /// 1. Downloaded local file (if exists on disk)
+    /// 2. Stream URL from the music service API
+    ///
+    /// When `config.storage.prefer_local_files` is true (default), local files
+    /// are always preferred regardless of offline mode. This avoids unnecessary
+    /// API calls and provides instant playback for downloaded tracks.
+    pub(crate) async fn resolve_play_url(&mut self, track: &Track) -> Result<Option<String>> {
+        // Check local files first (always, not just in offline mode)
+        if self.config.storage.prefer_local_files {
+            if let Some(ref dm) = self.download_manager {
+                if let Some(local_path) = dm.get_local_path(&track.id) {
+                    // Verify the file actually exists on disk
+                    if std::path::Path::new(&local_path).exists() {
+                        return Ok(Some(local_path));
+                    }
+                }
+            }
+        }
+
+        // Fall back to streaming URL
+        if self.downloads.offline_mode {
+            // In strict offline mode, don't try the network
+            self.add_debug(format!("Offline: skipping {} (not downloaded)", track.title));
+            Ok(None)
+        } else {
+            match self.music_service.get_stream_url(&track.id).await {
+                Ok(url) => Ok(Some(url)),
+                Err(e) => {
+                    self.add_debug(format!("Failed to get URL for {}: {}", track.title, e));
+                    Err(e)
+                }
+            }
+        }
     }
 
     pub fn add_debug(&mut self, msg: String) {
@@ -475,10 +574,20 @@ impl App {
             let playlist_id = self.playlists[index].id.clone();
             self.add_debug(format!("Loading playlist: {}", playlist_title));
 
-            self.tracks = self.music_service.get_playlist_tracks(&playlist_id).await?;
+            // Try cache first, then API
+            self.tracks = match self.metadata_cache.get_playlist_tracks(&playlist_id) {
+                Ok(Some(hit)) if matches!(hit.status, crate::storage::metadata_cache::CacheStatus::Fresh) => {
+                    self.add_debug(format!("Loaded {} tracks from cache", hit.data.len()));
+                    hit.data
+                }
+                _ => {
+                    let t = self.music_service.get_playlist_tracks(&playlist_id).await?;
+                    let _ = self.metadata_cache.set_playlist_tracks(&playlist_id, &t);
+                    self.add_debug(format!("Loaded {} tracks from API", t.len()));
+                    t
+                }
+            };
             self.browse.selected_track = 0;
-
-            self.add_debug(format!("Loaded {} tracks", self.tracks.len()));
         }
         Ok(())
     }
@@ -569,13 +678,50 @@ impl App {
     }
 
     pub async fn load_favorites(&mut self) {
-        self.add_debug("Loading favorites from Tidal...".to_string());
+        use crate::storage::metadata_cache::CacheStatus;
+
+        self.add_debug("Loading favorites...".to_string());
+
+        // Try cache first — immediate offline access
+        let cached = self.metadata_cache.get_favorites().ok().flatten();
+        if let Some(hit) = cached {
+            let (tracks, albums, artists) = hit.data;
+            self.favorite_tracks = tracks;
+            self.favorite_albums = albums;
+            self.favorite_artists = artists;
+            let status = match hit.status {
+                CacheStatus::Fresh => "fresh",
+                CacheStatus::Stale => "stale — refreshing",
+            };
+            self.add_debug(format!(
+                "Loaded {} tracks, {} albums, {} artists from cache ({})",
+                self.favorite_tracks.len(),
+                self.favorite_albums.len(),
+                self.favorite_artists.len(),
+                status
+            ));
+            // If fresh, we're done
+            if matches!(hit.status, CacheStatus::Fresh) {
+                self.library.loaded = true;
+                self.library.selected_track = 0;
+                self.library.selected_album = 0;
+                self.library.selected_artist = 0;
+                return;
+            }
+            // If stale, continue to refresh from API (but user already sees data)
+        }
+
+        // Fetch from API
+        let mut tracks_ok = false;
+        let mut albums_ok = false;
+        let mut artists_ok = false;
 
         match self.music_service.get_favorite_tracks().await {
             Ok(tracks) => {
                 let count = tracks.len();
                 self.favorite_tracks = tracks;
-                self.add_debug(format!("Loaded {} favorite tracks", count));
+                self.add_debug(format!("Loaded {} favorite tracks from API", count));
+                tracks_ok = true;
             }
             Err(e) => {
                 self.add_debug(format!("Failed to load favorite tracks: {}", e));
@@ -586,7 +732,8 @@ impl App {
             Ok(albums) => {
                 let count = albums.len();
                 self.favorite_albums = albums;
-                self.add_debug(format!("Loaded {} favorite albums", count));
+                self.add_debug(format!("Loaded {} favorite albums from API", count));
+                albums_ok = true;
             }
             Err(e) => {
                 self.add_debug(format!("Failed to load favorite albums: {}", e));
@@ -597,10 +744,22 @@ impl App {
             Ok(artists) => {
                 let count = artists.len();
                 self.favorite_artists = artists;
-                self.add_debug(format!("Loaded {} favorite artists", count));
+                self.add_debug(format!("Loaded {} favorite artists from API", count));
+                artists_ok = true;
             }
             Err(e) => {
                 self.add_debug(format!("Failed to load favorite artists: {}", e));
+            }
+        }
+
+        // Update cache with fresh data
+        if tracks_ok && albums_ok && artists_ok {
+            if let Err(e) = self.metadata_cache.set_favorites(
+                &self.favorite_tracks,
+                &self.favorite_albums,
+                &self.favorite_artists,
+            ) {
+                self.add_debug(format!("Failed to cache favorites: {}", e));
             }
         }
 
@@ -708,6 +867,8 @@ impl App {
 
     /// Load artist detail data
     pub async fn load_artist_detail(&mut self, artist: Artist) {
+        use crate::storage::metadata_cache::CacheStatus;
+
         self.artist_detail.artist = Some(artist.clone());
         self.artist_detail.selected_track = 0;
         self.artist_detail.selected_album = 0;
@@ -717,26 +878,52 @@ impl App {
 
         self.add_debug(format!("Loading artist: {}", artist.name));
 
-        // Fetch top tracks
+        // Try cache first
+        if let Ok(Some(hit)) = self.metadata_cache.get_artist_data(&artist.id) {
+            let (tracks, albums) = hit.data;
+            self.artist_detail.top_tracks = tracks;
+            self.artist_detail.albums = albums;
+            let status = match hit.status {
+                CacheStatus::Fresh => { return; } // fresh — done
+                CacheStatus::Stale => "stale",
+            };
+            self.add_debug(format!("Artist data from cache ({})", status));
+            // Continue to refresh from API...
+        }
+
+        // Fetch top tracks from API
+        let mut tracks_ok = false;
         match self.music_service.get_artist_top_tracks(&artist.id).await {
             Ok(tracks) => {
                 self.add_debug(format!("Loaded {} top tracks", tracks.len()));
                 self.artist_detail.top_tracks = tracks;
+                tracks_ok = true;
             }
             Err(e) => {
                 self.add_debug(format!("Failed to load top tracks: {}", e));
             }
         }
 
-        // Fetch albums
+        // Fetch albums from API
+        let mut albums_ok = false;
         match self.music_service.get_artist_albums(&artist.id).await {
             Ok(albums) => {
                 self.add_debug(format!("Loaded {} albums", albums.len()));
                 self.artist_detail.albums = albums;
+                albums_ok = true;
             }
             Err(e) => {
                 self.add_debug(format!("Failed to load albums: {}", e));
             }
+        }
+
+        // Cache the fresh data
+        if tracks_ok && albums_ok {
+            let _ = self.metadata_cache.set_artist_data(
+                &artist.id,
+                &self.artist_detail.top_tracks,
+                &self.artist_detail.albums,
+            );
         }
     }
 
@@ -748,9 +935,20 @@ impl App {
 
         self.add_debug(format!("Loading album: {} - {}", album.artist, album.title));
 
+        // Try cache first
+        if let Ok(Some(hit)) = self.metadata_cache.get_album_tracks(&album.id) {
+            self.album_detail.tracks = hit.data;
+            if matches!(hit.status, crate::storage::metadata_cache::CacheStatus::Fresh) {
+                return; // fresh — done
+            }
+            self.add_debug("Album tracks from cache (stale — refreshing)".to_string());
+        }
+
+        // Fetch from API
         match self.music_service.get_album_tracks(&album.id).await {
             Ok(tracks) => {
                 self.add_debug(format!("Loaded {} tracks", tracks.len()));
+                let _ = self.metadata_cache.set_album_tracks(&album.id, &tracks);
                 self.album_detail.tracks = tracks;
             }
             Err(e) => {

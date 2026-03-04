@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use crate::service::{CoverArt, ServiceType, Track};
 
 const QUEUE_FILE_NAME: &str = "queue.toml";
-const CURRENT_VERSION: u32 = 2;
+/// Version 2: original format. Version 3: added device_id, lamport_clock, updated_at_ms.
+/// Both are accepted on load thanks to #[serde(default)] on the new fields.
+const CURRENT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedTrack {
@@ -33,6 +35,15 @@ pub struct PersistedQueue {
     pub current_position: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub elapsed_seconds: Option<u32>,
+    /// Device that last wrote this queue (for conflict resolution).
+    #[serde(default)]
+    pub device_id: String,
+    /// Lamport clock — incremented on every local queue save.
+    #[serde(default)]
+    pub lamport_clock: u64,
+    /// Wall-clock timestamp (ms since epoch) of last write.
+    #[serde(default)]
+    pub updated_at_ms: u64,
 }
 
 impl PersistedQueue {
@@ -42,6 +53,9 @@ impl PersistedQueue {
             tracks: Vec::new(),
             current_position: None,
             elapsed_seconds: None,
+            device_id: String::new(),
+            lamport_clock: 0,
+            updated_at_ms: 0,
         }
     }
 
@@ -51,6 +65,9 @@ impl PersistedQueue {
             tracks: tracks.iter().map(PersistedTrack::from).collect(),
             current_position: position,
             elapsed_seconds: elapsed,
+            device_id: String::new(),
+            lamport_clock: 0,
+            updated_at_ms: 0,
         }
     }
 }
@@ -126,9 +143,10 @@ pub fn load_queue() -> Result<Option<PersistedQueue>> {
 
     match toml::from_str::<PersistedQueue>(&contents) {
         Ok(queue) => {
-            // Version check - only load if version matches
-            if queue.version != CURRENT_VERSION {
-                eprintln!("Warning: Queue file version mismatch (found {}, expected {}), starting fresh",
+            // Accept version 2 (original) and 3 (with CRDT fields).
+            // serde(default) fills in zero values for new fields on v2 files.
+            if queue.version < 2 || queue.version > CURRENT_VERSION {
+                eprintln!("Warning: Queue file version mismatch (found {}, expected 2..{}), starting fresh",
                          queue.version, CURRENT_VERSION);
                 return Ok(None);
             }
