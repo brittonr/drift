@@ -56,12 +56,6 @@
           inherit pkgs;
           src = ./.;
           resolvedJson = ./build-plan.json;
-          extraCrateOverrides = {
-            # These crates have build.rs scripts that expect CARGO_ENCODED_RUSTFLAGS,
-            # which buildRustCrate doesn't provide.
-            av-scenechange = attrs: { CARGO_ENCODED_RUSTFLAGS = ""; };
-            rav1e = attrs: { CARGO_ENCODED_RUSTFLAGS = ""; };
-          };
         };
       in
       {
