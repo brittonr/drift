@@ -247,6 +247,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aspen-core",
+ "aspen-crypto",
  "async-trait",
  "base64 0.22.1",
  "blake3",
@@ -351,6 +352,18 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "aspen-crypto"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "iroh",
+ "rand 0.9.2",
+ "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]

@@ -22,13 +22,11 @@ pkgs.testers.runNixOSTest {
     services.mpd = {
       enable = true;
       musicDirectory = "/var/lib/mpd/music";
-      extraConfig = ''
-        audio_output {
-          type "null"
-          name "Null Output"
-          mixer_type "software"
-        }
-      '';
+      settings.audio_output = [{
+        type = "null";
+        name = "Null Output";
+        mixer_type = "software";
+      }];
     };
 
     # Open MPD port for local connections

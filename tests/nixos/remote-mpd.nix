@@ -29,13 +29,11 @@ pkgs.testers.runNixOSTest {
       enable = true;
       musicDirectory = "/var/lib/mpd/music";
       network.listenAddress = "any";
-      extraConfig = ''
-        audio_output {
-          type "null"
-          name "Null Output"
-          mixer_type "software"
-        }
-      '';
+      settings.audio_output = [{
+        type = "null";
+        name = "Null Output";
+        mixer_type = "software";
+      }];
     };
 
     networking.firewall.allowedTCPPorts = [ mpdPort ];

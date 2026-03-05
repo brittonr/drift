@@ -8,9 +8,14 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
+    unit2nix = {
+      url = "github:brittonr/unit2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, unit2nix, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -18,14 +23,22 @@
           inherit system overlays;
         };
 
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
           extensions = [ "rust-src" "rust-analyzer" ];
         };
+
+        # Unwrapped unit2nix — uses nightly cargo from devshell PATH
+        updatePlan = pkgs.writeShellScriptBin "update-plan" ''
+          exec ${unit2nix.packages.${system}.unit2nix}/bin/.unit2nix-wrapped \
+            --manifest-path ./Cargo.toml \
+            -o build-plan.json
+        '';
 
         nativeBuildInputs = with pkgs; [
           rustToolchain
           pkg-config
           cargo-watch
+          updatePlan
         ];
 
         buildInputs = with pkgs; [
@@ -36,6 +49,20 @@
           cava  # Console audio visualizer
           mpc  # For MPD control
         ];
+
+        # unit2nix per-crate builds (manual mode — no IFD)
+        # Regenerate build-plan.json: run `update-plan` in devshell
+        ws = import "${unit2nix}/lib/build-from-unit-graph.nix" {
+          inherit pkgs;
+          src = ./.;
+          resolvedJson = ./build-plan.json;
+          extraCrateOverrides = {
+            # These crates have build.rs scripts that expect CARGO_ENCODED_RUSTFLAGS,
+            # which buildRustCrate doesn't provide.
+            av-scenechange = attrs: { CARGO_ENCODED_RUSTFLAGS = ""; };
+            rav1e = attrs: { CARGO_ENCODED_RUSTFLAGS = ""; };
+          };
+        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -50,30 +77,23 @@
             echo "  cargo build    - Build the project"
             echo "  cargo run      - Run the TUI"
             echo "  cargo watch    - Auto-rebuild on changes"
+            echo "  update-plan    - Regenerate build-plan.json"
             echo ""
           '';
 
           RUST_BACKTRACE = 1;
         };
 
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "drift";
-          version = "0.1.0";
+        packages.default = ws.workspaceMembers."drift".build;
 
-          src = ./.;
-
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-          };
-
-          # Strip optional aspen deps — they live outside this repo
-          # (../aspen/) and aren't needed for default features.
-          postPatch = ''
-            sed -i '/^aspen-client/d' Cargo.toml
-            sed -i '/^aspen = /d' Cargo.toml
-          '';
-
-          inherit nativeBuildInputs buildInputs;
+        # Regenerate build plan (requires nightly cargo on PATH)
+        apps.update-plan = {
+          type = "app";
+          program = toString (pkgs.writeShellScript "update-plan" ''
+            exec ${unit2nix.packages.${system}.unit2nix}/bin/.unit2nix-wrapped \
+              --manifest-path ./Cargo.toml \
+              -o build-plan.json
+          '');
         };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
         # NixOS VM integration tests (Linux only, require KVM)
