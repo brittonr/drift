@@ -15,8 +15,17 @@
     };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, unit2nix, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+      flake-utils,
+      unit2nix,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
@@ -24,12 +33,14 @@
         };
 
         rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
-          extensions = [ "rust-src" "rust-analyzer" ];
+          extensions = [
+            "rust-src"
+            "rust-analyzer"
+          ];
         };
 
-        # Unwrapped unit2nix — uses nightly cargo from devshell PATH
         updatePlan = pkgs.writeShellScriptBin "update-plan" ''
-          exec ${unit2nix.packages.${system}.unit2nix}/bin/.unit2nix-wrapped \
+          exec ${unit2nix.packages.${system}.unit2nix}/bin/unit2nix \
             --manifest-path ./Cargo.toml \
             -o build-plan.json
         '';
@@ -46,8 +57,8 @@
         ];
 
         runtimeDependencies = with pkgs; [
-          cava  # Console audio visualizer
-          mpc  # For MPD control
+          cava # Console audio visualizer
+          mpc # For MPD control
         ];
 
         # unit2nix per-crate builds (manual mode — no IFD)
@@ -83,13 +94,16 @@
         # Regenerate build plan (requires nightly cargo on PATH)
         apps.update-plan = {
           type = "app";
-          program = toString (pkgs.writeShellScript "update-plan" ''
-            exec ${unit2nix.packages.${system}.unit2nix}/bin/.unit2nix-wrapped \
-              --manifest-path ./Cargo.toml \
-              -o build-plan.json
-          '');
+          program = toString (
+            pkgs.writeShellScript "update-plan" ''
+              exec ${unit2nix.packages.${system}.unit2nix}/bin/unit2nix \
+                --manifest-path ./Cargo.toml \
+                -o build-plan.json
+            ''
+          );
         };
-      } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+      }
+      // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
         # NixOS VM integration tests (Linux only, require KVM)
         checks = {
           mpd-integration = import ./tests/nixos/mpd-integration.nix {
@@ -101,5 +115,6 @@
             drift = self.packages.${system}.default;
           };
         };
-      });
+      }
+    );
 }
