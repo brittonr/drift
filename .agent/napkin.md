@@ -25,3 +25,7 @@
 - Playlist sync uses drift-plugin types: SyncedPlaylist (LWW metadata + OR-set tracks), PlaylistIndex
 - Peer cluster support: PeerConfig in StorageConfig, Aspen peer cluster API (AddPeerCluster, UpdatePeerClusterFilter with include prefix)
 - Key schema: drift:{user}:playlist:{id}, drift:{user}:playlist_index
+- TUI peer browse: tab 2 in browse mode, three-panel (peers/playlists/tracks), h/l between panels
+- AspenStorage peer playlist reads: scan for drift:*:playlist_index from non-self users, match peer name to user ID
+- PeerClusterManager: init on startup, AddPeerCluster + include filter ["drift:"], idempotent (checks existing before adding)
+- Worker delegated tasks that report "done" may not actually edit files — verify with git diff
