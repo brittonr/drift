@@ -19,6 +19,9 @@ pub mod wal;
 #[cfg(feature = "aspen")]
 pub mod aspen;
 
+#[cfg(feature = "aspen")]
+pub mod peers;
+
 use anyhow::Result;
 use async_trait::async_trait;
 

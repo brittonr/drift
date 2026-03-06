@@ -834,6 +834,230 @@ impl DriftStorage for AspenStorage {
 
         Ok(events)
     }
+
+    // ── Playlists ─────────────────────────────────────────────────────────
+
+    async fn save_playlist(&self, playlist: &drift_plugin::playlist::SyncedPlaylist) -> Result<()> {
+        // Write the playlist itself
+        let pl_key = drift_plugin::playlist::playlist_key(&self.user_id, &playlist.id);
+        let value = serde_json::to_vec(playlist)?;
+        self.kv_set(&pl_key, &value).await?;
+
+        // Update the playlist index
+        let idx_key = drift_plugin::playlist::playlist_index_key(&self.user_id);
+        let mut index = match self.kv_get(&idx_key).await? {
+            Some(bytes) => serde_json::from_slice::<drift_plugin::playlist::PlaylistIndex>(&bytes)
+                .unwrap_or_else(|_| drift_plugin::playlist::PlaylistIndex {
+                    playlists: Vec::new(),
+                    updated_at_ms: 0,
+                    lamport_clock: 0,
+                    device_id: self.user_id.clone(),
+                }),
+            None => drift_plugin::playlist::PlaylistIndex {
+                playlists: Vec::new(),
+                updated_at_ms: 0,
+                lamport_clock: 0,
+                device_id: self.user_id.clone(),
+            },
+        };
+
+        // Upsert the entry
+        let entry = drift_plugin::playlist::PlaylistIndexEntry {
+            id: playlist.id.clone(),
+            title: playlist.title.clone(),
+            track_count: playlist.tracks.len(),
+            updated_at_ms: playlist.updated_at_ms,
+            visibility: playlist.visibility,
+        };
+        if let Some(existing) = index.playlists.iter_mut().find(|e| e.id == playlist.id) {
+            *existing = entry;
+        } else {
+            index.playlists.push(entry);
+        }
+        index.updated_at_ms = playlist.updated_at_ms;
+        index.lamport_clock = playlist.lamport_clock;
+
+        let idx_value = serde_json::to_vec(&index)?;
+        self.kv_set(&idx_key, &idx_value).await?;
+
+        Ok(())
+    }
+
+    async fn load_playlist(
+        &self,
+        playlist_id: &str,
+    ) -> Result<Option<drift_plugin::playlist::SyncedPlaylist>> {
+        let key = drift_plugin::playlist::playlist_key(&self.user_id, playlist_id);
+        match self.kv_get(&key).await? {
+            Some(bytes) => {
+                let playlist: drift_plugin::playlist::SyncedPlaylist =
+                    serde_json::from_slice(&bytes)?;
+                Ok(Some(playlist))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list_playlists(
+        &self,
+    ) -> Result<Vec<drift_plugin::playlist::PlaylistIndexEntry>> {
+        let key = drift_plugin::playlist::playlist_index_key(&self.user_id);
+        match self.kv_get(&key).await? {
+            Some(bytes) => {
+                let index: drift_plugin::playlist::PlaylistIndex =
+                    serde_json::from_slice(&bytes)?;
+                Ok(index
+                    .playlists
+                    .into_iter()
+                    .filter(|e| e.visibility == drift_plugin::playlist::PlaylistVisibility::Shared)
+                    .collect())
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+        // Delete the playlist
+        let pl_key = drift_plugin::playlist::playlist_key(&self.user_id, playlist_id);
+        self.kv_delete(&pl_key).await;
+
+        // Remove from index
+        let idx_key = drift_plugin::playlist::playlist_index_key(&self.user_id);
+        if let Some(bytes) = self.kv_get(&idx_key).await? {
+            if let Ok(mut index) =
+                serde_json::from_slice::<drift_plugin::playlist::PlaylistIndex>(&bytes)
+            {
+                index.playlists.retain(|e| e.id != playlist_id);
+                let idx_value = serde_json::to_vec(&index)?;
+                self.kv_set(&idx_key, &idx_value).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    // ── Peer Clusters ─────────────────────────────────────────────────────
+
+    async fn list_peers(&self) -> Result<Vec<super::PeerInfo>> {
+        let conn = self.connection.read().await;
+        if conn.health.state == ConnectionState::Reconnecting {
+            return Ok(Vec::new());
+        }
+
+        let resp = conn
+            .client
+            .send(ClientRpcRequest::ListPeerClusters)
+            .await?;
+
+        match resp {
+            ClientRpcResponse::ListPeerClustersResult(r) => {
+                if let Some(err) = r.error {
+                    anyhow::bail!("ListPeerClusters failed: {}", err);
+                }
+                Ok(r.peers
+                    .into_iter()
+                    .map(|p| super::PeerInfo {
+                        name: p.name,
+                        cluster_id: p.cluster_id,
+                        enabled: p.is_enabled,
+                        sync_status: match p.state.as_str() {
+                            "connected" => super::PeerSyncStatus::Synced,
+                            "connecting" => super::PeerSyncStatus::Syncing,
+                            "disconnected" if !p.is_enabled => super::PeerSyncStatus::Disabled,
+                            "failed" => {
+                                super::PeerSyncStatus::Error("connection failed".to_string())
+                            }
+                            _ => super::PeerSyncStatus::Syncing,
+                        },
+                    })
+                    .collect())
+            }
+            ClientRpcResponse::Error(e) => anyhow::bail!("ListPeerClusters error: {}", e.message),
+            _ => anyhow::bail!("unexpected response to ListPeerClusters"),
+        }
+    }
+
+    async fn get_peer_playlists(
+        &self,
+        peer_name: &str,
+    ) -> Result<Vec<drift_plugin::playlist::PlaylistIndexEntry>> {
+        // Find the peer's user ID by scanning for their playlist index key.
+        // Peer data is replicated to our cluster under the peer's `drift:{peer_user}:*` prefix.
+        // We scan for `drift:*:playlist_index` to find which user the peer name maps to.
+        //
+        // Strategy: scan all `drift:` keys looking for playlist_index entries
+        // from users that aren't us. The peer "name" in our config is a
+        // human-readable label — the actual user ID comes from the replicated data.
+        let prefix = format!("drift:");
+        let entries = self.kv_scan(&prefix, 1000).await?;
+
+        // Collect unique user IDs from playlist_index keys
+        for (key, value) in &entries {
+            if !key.ends_with(":playlist_index") {
+                continue;
+            }
+            // Extract user from drift:{user}:playlist_index
+            let parts: Vec<&str> = key.splitn(3, ':').collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let user = parts[1];
+            // Skip our own data
+            if user == self.user_id {
+                continue;
+            }
+
+            // For now, match peer name to user ID directly.
+            // In a more sophisticated setup, we'd store a mapping.
+            if user == peer_name {
+                if let Ok(index) =
+                    serde_json::from_str::<drift_plugin::playlist::PlaylistIndex>(value)
+                {
+                    return Ok(index
+                        .playlists
+                        .into_iter()
+                        .filter(|e| {
+                            e.visibility == drift_plugin::playlist::PlaylistVisibility::Shared
+                        })
+                        .collect());
+                }
+            }
+        }
+
+        // Fallback: try scanning with the peer name as user ID directly
+        let idx_key = drift_plugin::playlist::playlist_index_key(peer_name);
+        match self.kv_get(&idx_key).await? {
+            Some(bytes) => {
+                let index: drift_plugin::playlist::PlaylistIndex =
+                    serde_json::from_slice(&bytes)?;
+                Ok(index
+                    .playlists
+                    .into_iter()
+                    .filter(|e| {
+                        e.visibility == drift_plugin::playlist::PlaylistVisibility::Shared
+                    })
+                    .collect())
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    async fn get_peer_playlist(
+        &self,
+        peer_name: &str,
+        playlist_id: &str,
+    ) -> Result<Option<drift_plugin::playlist::SyncedPlaylist>> {
+        // Read the peer's playlist directly by key
+        let key = drift_plugin::playlist::playlist_key(peer_name, playlist_id);
+        match self.kv_get(&key).await? {
+            Some(bytes) => {
+                let playlist: drift_plugin::playlist::SyncedPlaylist =
+                    serde_json::from_slice(&bytes)?;
+                Ok(Some(playlist))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]
