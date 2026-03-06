@@ -26,8 +26,8 @@ use crate::video::MpvController;
 
 pub use state::{
     AlbumDetailState, ArtistDetailState, BrowseState, ClickableAreas, DialogMode, DialogState,
-    DownloadsState, HelpState, KeyState, LibraryState, PlaybackState, SearchState, StatusMessage,
-    ViewMode,
+    DownloadsState, HelpState, KeyState, LibraryState, PeerBrowseState, PlaybackState,
+    SearchState, StatusMessage, ViewMode,
 };
 
 pub struct App {
@@ -115,6 +115,12 @@ pub struct App {
 
     // Status bar message (for displaying errors/info)
     pub status_message: Option<StatusMessage>,
+
+    // Peer playlists
+    pub peer_browse: PeerBrowseState,
+    pub peer_names: Vec<String>,
+    pub peer_playlists: Vec<drift_plugin::playlist::PlaylistIndexEntry>,
+    pub peer_tracks: Vec<Track>,
 
     // Video playback controller (for YouTube video mode)
     pub video_controller: Option<MpvController>,
@@ -441,6 +447,10 @@ impl App {
             show_debug: false,
             dialog: DialogState::default(),
             status_message: None,
+            peer_browse: PeerBrowseState::default(),
+            peer_names: Vec::new(),
+            peer_playlists: Vec::new(),
+            peer_tracks: Vec::new(),
             video_controller,
             last_playlist_sync: std::time::Instant::now(),
         })
@@ -590,6 +600,87 @@ impl App {
             self.browse.selected_track = 0;
         }
         Ok(())
+    }
+
+    /// Load the list of peer names from storage config.
+    pub fn load_peer_names(&mut self) {
+        self.peer_names = self.config.storage.peers
+            .iter()
+            .filter(|p| p.enabled)
+            .map(|p| p.name.clone())
+            .collect();
+        self.peer_browse.loaded = !self.peer_names.is_empty();
+    }
+
+    /// Load playlists for the currently selected peer.
+    pub async fn load_peer_playlists(&mut self) {
+        if self.peer_names.is_empty() {
+            self.peer_playlists.clear();
+            return;
+        }
+        let peer_name = self.peer_names[self.peer_browse.selected_peer].clone();
+        match self.storage.get_peer_playlists(&peer_name).await {
+            Ok(playlists) => {
+                self.add_debug(format!(
+                    "Loaded {} playlists from peer '{}'",
+                    playlists.len(),
+                    peer_name
+                ));
+                self.peer_playlists = playlists;
+                self.peer_browse.selected_playlist = 0;
+                self.peer_tracks.clear();
+                self.peer_browse.selected_track = 0;
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load peer playlists: {}", e));
+                self.peer_playlists.clear();
+            }
+        }
+    }
+
+    /// Load tracks for the currently selected peer playlist.
+    pub async fn load_peer_playlist_tracks(&mut self) {
+        if self.peer_names.is_empty() || self.peer_playlists.is_empty() {
+            self.peer_tracks.clear();
+            return;
+        }
+        let peer_name = self.peer_names[self.peer_browse.selected_peer].clone();
+        let playlist_id = self.peer_playlists[self.peer_browse.selected_playlist].id.clone();
+        match self.storage.get_peer_playlist(&peer_name, &playlist_id).await {
+            Ok(Some(playlist)) => {
+                self.add_debug(format!(
+                    "Loaded {} tracks from peer playlist '{}'",
+                    playlist.tracks.len(),
+                    playlist.title
+                ));
+                self.peer_tracks = playlist
+                    .tracks
+                    .iter()
+                    .map(|tr| Track {
+                        id: tr.id.clone(),
+                        title: tr.title.clone(),
+                        artist: tr.artist.clone(),
+                        album: tr.album.clone(),
+                        duration_seconds: tr.duration_seconds,
+                        cover_art: tr
+                            .cover_art_url
+                            .clone()
+                            .map(CoverArt::Url)
+                            .unwrap_or(CoverArt::None),
+                        service: tr.service.parse().unwrap_or(crate::service::ServiceType::Tidal),
+                    })
+                    .collect();
+                self.peer_browse.selected_track = 0;
+            }
+            Ok(None) => {
+                self.add_debug(format!("Peer playlist '{}' not found", playlist_id));
+                self.peer_tracks.clear();
+            }
+            Err(e) => {
+                self.add_debug(format!("Failed to load peer tracks: {}", e));
+                self.peer_tracks.clear();
+            }
+        }
     }
 
     pub async fn search(&mut self) -> Result<()> {

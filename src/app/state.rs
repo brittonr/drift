@@ -222,3 +222,18 @@ pub struct DialogState {
     pub input_text: String,
     pub selected_index: usize,
 }
+
+/// Peer playlists browsing state
+#[derive(Default)]
+pub struct PeerBrowseState {
+    /// Index of the selected peer in the peers list
+    pub selected_peer: usize,
+    /// Index of selected playlist for the current peer
+    pub selected_playlist: usize,
+    /// Index of selected track in the current peer playlist
+    pub selected_track: usize,
+    /// Which sub-panel is active: 0=peers, 1=playlists, 2=tracks
+    pub active_panel: usize,
+    /// Whether peer data has been loaded
+    pub loaded: bool,
+}

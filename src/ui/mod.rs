@@ -12,6 +12,7 @@ pub mod styles;
 pub mod keybindings;
 pub mod help;
 pub mod dialog;
+pub mod peer_browse;
 pub mod theme;
 
 pub use now_playing::render_now_playing;

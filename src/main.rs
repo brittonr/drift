@@ -50,7 +50,10 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = match App::new().await {
-        Ok(app) => app,
+        Ok(mut app) => {
+            app.load_peer_names();
+            app
+        }
         Err(e) => {
             disable_raw_mode()?;
             execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
@@ -313,18 +316,39 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
 
     match app.view_mode {
         ViewMode::Browse => {
-            let browse_state = ui::browse::BrowseViewState {
-                playlists: &app.playlists,
-                tracks: &app.tracks,
-                selected_playlist: app.browse.selected_playlist,
-                selected_track: app.browse.selected_track,
-                selected_tab: app.browse.selected_tab,
-                synced_playlist_ids: &app.downloads.synced_playlist_ids,
-                current_track_id,
-            };
-            let (left, right) = render_browse_view(f, &browse_state, area, theme);
-            app.clickable_areas.left_list = Some(left);
-            app.clickable_areas.right_list = Some(right);
+            if app.browse.selected_tab == 2 {
+                let peer_state = ui::peer_browse::PeerBrowseViewState {
+                    peer_names: &app.peer_names,
+                    playlists: &app.peer_playlists,
+                    tracks: &app.peer_tracks,
+                    selected_peer: app.peer_browse.selected_peer,
+                    selected_playlist: app.peer_browse.selected_playlist,
+                    selected_track: app.peer_browse.selected_track,
+                    active_panel: app.peer_browse.active_panel,
+                    current_track_id,
+                };
+                let (left, right) = ui::peer_browse::render_peer_browse_view(
+                    f,
+                    &peer_state,
+                    area,
+                    theme,
+                );
+                app.clickable_areas.left_list = Some(left);
+                app.clickable_areas.right_list = Some(right);
+            } else {
+                let browse_state = ui::browse::BrowseViewState {
+                    playlists: &app.playlists,
+                    tracks: &app.tracks,
+                    selected_playlist: app.browse.selected_playlist,
+                    selected_track: app.browse.selected_track,
+                    selected_tab: app.browse.selected_tab,
+                    synced_playlist_ids: &app.downloads.synced_playlist_ids,
+                    current_track_id,
+                };
+                let (left, right) = render_browse_view(f, &browse_state, area, theme);
+                app.clickable_areas.left_list = Some(left);
+                app.clickable_areas.right_list = Some(right);
+            }
         }
         ViewMode::Search => {
             // Get history suggestions when search is active

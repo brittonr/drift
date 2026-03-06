@@ -44,6 +44,22 @@ impl App {
                 self.browse.selected_playlist = (self.browse.selected_playlist + 1).min(self.playlists.len() - 1);
             } else if self.browse.selected_tab == 1 && !self.tracks.is_empty() {
                 self.browse.selected_track = (self.browse.selected_track + 1).min(self.tracks.len() - 1);
+            } else if self.browse.selected_tab == 2 {
+                match self.peer_browse.active_panel {
+                    0 if !self.peer_names.is_empty() => {
+                        self.peer_browse.selected_peer = (self.peer_browse.selected_peer + 1)
+                            .min(self.peer_names.len() - 1);
+                    }
+                    1 if !self.peer_playlists.is_empty() => {
+                        self.peer_browse.selected_playlist = (self.peer_browse.selected_playlist + 1)
+                            .min(self.peer_playlists.len() - 1);
+                    }
+                    2 if !self.peer_tracks.is_empty() => {
+                        self.peer_browse.selected_track = (self.peer_browse.selected_track + 1)
+                            .min(self.peer_tracks.len() - 1);
+                    }
+                    _ => {}
+                }
             }
         } else if let Some(ref results) = self.search_results {
             match self.search.tab {
@@ -101,6 +117,19 @@ impl App {
                 self.browse.selected_playlist -= 1;
             } else if self.browse.selected_tab == 1 && self.browse.selected_track > 0 {
                 self.browse.selected_track -= 1;
+            } else if self.browse.selected_tab == 2 {
+                match self.peer_browse.active_panel {
+                    0 if self.peer_browse.selected_peer > 0 => {
+                        self.peer_browse.selected_peer -= 1;
+                    }
+                    1 if self.peer_browse.selected_playlist > 0 => {
+                        self.peer_browse.selected_playlist -= 1;
+                    }
+                    2 if self.peer_browse.selected_track > 0 => {
+                        self.peer_browse.selected_track -= 1;
+                    }
+                    _ => {}
+                }
             }
         } else if self.search_results.is_some() {
             match self.search.tab {
@@ -119,9 +148,13 @@ impl App {
     }
 
     pub fn move_left(&mut self) {
-        if self.view_mode == ViewMode::Browse && self.browse.selected_tab > 0 {
-            self.browse.selected_tab = 0;
-            self.add_debug("Switched to playlists panel".to_string());
+        if self.view_mode == ViewMode::Browse {
+            if self.browse.selected_tab == 2 && self.peer_browse.active_panel > 0 {
+                self.peer_browse.active_panel -= 1;
+            } else if self.browse.selected_tab > 0 {
+                self.browse.selected_tab -= 1;
+                self.add_debug(format!("Switched to tab {}", self.browse.selected_tab));
+            }
         } else if self.view_mode == ViewMode::ArtistDetail && self.artist_detail.selected_panel > 0 {
             self.artist_detail.selected_panel = 0;
             self.add_debug("Switched to top tracks panel".to_string());
@@ -129,9 +162,16 @@ impl App {
     }
 
     pub fn move_right(&mut self) {
-        if self.view_mode == ViewMode::Browse && self.browse.selected_tab < 1 {
-            self.browse.selected_tab = 1;
-            self.add_debug("Switched to tracks panel".to_string());
+        if self.view_mode == ViewMode::Browse {
+            if self.browse.selected_tab == 2 && self.peer_browse.active_panel < 2 {
+                self.peer_browse.active_panel += 1;
+            } else if self.browse.selected_tab < 2 {
+                self.browse.selected_tab += 1;
+                if self.browse.selected_tab == 2 {
+                    self.peer_browse.active_panel = 0;
+                }
+                self.add_debug(format!("Switched to tab {}", self.browse.selected_tab));
+            }
         } else if self.view_mode == ViewMode::ArtistDetail && self.artist_detail.selected_panel < 1 {
             self.artist_detail.selected_panel = 1;
             self.add_debug("Switched to albums panel".to_string());
@@ -159,8 +199,15 @@ impl App {
         } else if self.view_mode == ViewMode::Browse {
             if self.browse.selected_tab == 0 {
                 self.browse.selected_playlist = 0;
-            } else {
+            } else if self.browse.selected_tab == 1 {
                 self.browse.selected_track = 0;
+            } else if self.browse.selected_tab == 2 {
+                match self.peer_browse.active_panel {
+                    0 => self.peer_browse.selected_peer = 0,
+                    1 => self.peer_browse.selected_playlist = 0,
+                    2 => self.peer_browse.selected_track = 0,
+                    _ => {}
+                }
             }
         } else {
             match self.search.tab {
@@ -205,6 +252,19 @@ impl App {
                 self.browse.selected_playlist = self.playlists.len() - 1;
             } else if self.browse.selected_tab == 1 && !self.tracks.is_empty() {
                 self.browse.selected_track = self.tracks.len() - 1;
+            } else if self.browse.selected_tab == 2 {
+                match self.peer_browse.active_panel {
+                    0 if !self.peer_names.is_empty() => {
+                        self.peer_browse.selected_peer = self.peer_names.len() - 1;
+                    }
+                    1 if !self.peer_playlists.is_empty() => {
+                        self.peer_browse.selected_playlist = self.peer_playlists.len() - 1;
+                    }
+                    2 if !self.peer_tracks.is_empty() => {
+                        self.peer_browse.selected_track = self.peer_tracks.len() - 1;
+                    }
+                    _ => {}
+                }
             }
         } else if let Some(ref results) = self.search_results {
             match self.search.tab {

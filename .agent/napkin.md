@@ -14,7 +14,7 @@
 - `nix build .#default -L` shows exactly which derivations rebuild
 
 ## Patterns That Don't Work
-- (none yet)
+- redb AccessGuard borrows: must read value into owned type, drop guard, THEN mutate the table (can't hold immutable borrow while inserting)
 
 ## Domain Notes
 - Drift is a terminal music player (ratatui TUI) for Tidal streaming
@@ -22,3 +22,6 @@
 - Optional `aspen` feature deps point to `../aspen/` (sibling repo, not in workspace)
 - 3 binaries: drift (main TUI), drift-sync, tidal-db
 - NixOS VM integration tests in `tests/nixos/`
+- Playlist sync uses drift-plugin types: SyncedPlaylist (LWW metadata + OR-set tracks), PlaylistIndex
+- Peer cluster support: PeerConfig in StorageConfig, Aspen peer cluster API (AddPeerCluster, UpdatePeerClusterFilter with include prefix)
+- Key schema: drift:{user}:playlist:{id}, drift:{user}:playlist_index

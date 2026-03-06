@@ -355,6 +355,16 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> KeyAction {
                 } else {
                     app.playback.queue_dirty = true;
                 }
+            } else if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 2 && app.peer_browse.active_panel == 2 {
+                let count = app.peer_tracks.len();
+                for track in app.peer_tracks.clone() {
+                    if let Err(e) = app.add_track_to_queue(track).await {
+                        app.set_status_error(format!("Failed to add peer track: {}", e));
+                        break;
+                    }
+                }
+                app.add_debug(format!("Added {} peer tracks to queue", count));
+                app.playback.queue_dirty = true;
             } else if let Err(e) = app.add_all_tracks_to_queue().await {
                 app.set_status_error(format!("Failed to add tracks: {}", e));
             } else {
@@ -821,6 +831,10 @@ fn handle_add_to_playlist(app: &mut App) {
         ViewMode::Browse => {
             if app.browse.selected_tab == 1 && app.browse.selected_track < app.tracks.len() {
                 Some(app.tracks[app.browse.selected_track].clone())
+            } else if app.browse.selected_tab == 2 && app.peer_browse.active_panel == 2
+                && app.peer_browse.selected_track < app.peer_tracks.len()
+            {
+                Some(app.peer_tracks[app.peer_browse.selected_track].clone())
             } else {
                 None
             }
@@ -912,6 +926,29 @@ async fn handle_enter(app: &mut App) {
         } else if app.browse.selected_tab == 1 {
             if let Err(e) = app.play_selected_track().await {
                 app.set_status_error(format!("Error playing track: {}", e));
+            }
+        } else if app.browse.selected_tab == 2 {
+            match app.peer_browse.active_panel {
+                0 => {
+                    // Selected a peer — load their playlists
+                    app.load_peer_playlists().await;
+                    app.peer_browse.active_panel = 1;
+                }
+                1 => {
+                    // Selected a playlist — load its tracks
+                    app.load_peer_playlist_tracks().await;
+                    app.peer_browse.active_panel = 2;
+                }
+                2 => {
+                    // Selected a track — play it
+                    if app.peer_browse.selected_track < app.peer_tracks.len() {
+                        let track = app.peer_tracks[app.peer_browse.selected_track].clone();
+                        if let Err(e) = app.play_track(track).await {
+                            app.set_status_error(format!("Error playing peer track: {}", e));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     } else if app.view_mode == ViewMode::Search {
@@ -1006,6 +1043,15 @@ async fn handle_yank(app: &mut App) {
                 app.playback.queue_dirty = true;
             }
         }
+    } else if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 2 && app.peer_browse.active_panel == 2 {
+        if app.peer_browse.selected_track < app.peer_tracks.len() {
+            let track = app.peer_tracks[app.peer_browse.selected_track].clone();
+            if let Err(e) = app.add_track_to_queue(track).await {
+                app.set_status_error(format!("Failed to add peer track: {}", e));
+            } else {
+                app.playback.queue_dirty = true;
+            }
+        }
     } else if let Err(e) = app.add_selected_track_to_queue().await {
         app.set_status_error(format!("Failed to add track: {}", e));
     } else {
@@ -1050,6 +1096,13 @@ async fn handle_play(app: &mut App) {
     } else if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 1 {
         if let Err(e) = app.play_selected_track().await {
             app.set_status_error(format!("Error playing track: {}", e));
+        }
+    } else if app.view_mode == ViewMode::Browse && app.browse.selected_tab == 2 && app.peer_browse.active_panel == 2 {
+        if app.peer_browse.selected_track < app.peer_tracks.len() {
+            let track = app.peer_tracks[app.peer_browse.selected_track].clone();
+            if let Err(e) = app.play_track(track).await {
+                app.set_status_error(format!("Error playing peer track: {}", e));
+            }
         }
     } else if app.view_mode == ViewMode::Search {
         match app.search.tab {
