@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use crate::service::{SearchResults, ServiceType, Track};
 use crate::queue_persistence::PersistedQueue;
 use crate::search::SearchHistory;
+use drift_plugin::playlist::SyncedPlaylist;
 
 const WAL_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("wal_entries");
 
@@ -26,6 +27,10 @@ pub enum ReplicationOp {
     UploadBlob {
         track_id: String,
         file_path: String,
+    },
+    SavePlaylist(SyncedPlaylist),
+    DeletePlaylist {
+        playlist_id: String,
     },
 }
 

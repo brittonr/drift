@@ -27,6 +27,11 @@ use crate::queue_persistence::PersistedQueue;
 use crate::search::SearchHistory;
 use crate::service::{SearchResults, ServiceType, Track};
 
+// Re-export playlist types from drift-plugin for convenience
+pub use drift_plugin::playlist::{
+    PlaylistIndex, PlaylistIndexEntry, PlaylistVisibility, SyncedPlaylist, SyncedTrackRef,
+};
+
 /// Reference to a blob in the distributed store.
 #[derive(Debug, Clone)]
 pub struct BlobRef {
@@ -46,6 +51,10 @@ pub enum SyncEvent {
     QueueChanged(PersistedQueue),
     /// History was updated by another device.
     HistoryChanged(Vec<HistoryEntry>),
+    /// A playlist was created or updated (own or peer).
+    PlaylistChanged { playlist_id: String },
+    /// A playlist was deleted.
+    PlaylistDeleted { playlist_id: String },
 }
 
 /// Core storage trait for all persistent drift data.
@@ -123,6 +132,49 @@ pub trait DriftStorage: Send + Sync {
         Ok(None)
     }
 
+    // ── Playlists ─────────────────────────────────────────────────
+
+    /// Save a synced playlist.
+    async fn save_playlist(&self, _playlist: &SyncedPlaylist) -> Result<()> {
+        Ok(())
+    }
+
+    /// Load a single playlist by ID.
+    async fn load_playlist(&self, _playlist_id: &str) -> Result<Option<SyncedPlaylist>> {
+        Ok(None)
+    }
+
+    /// List all own playlists (from the playlist index).
+    async fn list_playlists(&self) -> Result<Vec<PlaylistIndexEntry>> {
+        Ok(Vec::new())
+    }
+
+    /// Delete a playlist by ID.
+    async fn delete_playlist(&self, _playlist_id: &str) -> Result<()> {
+        Ok(())
+    }
+
+    // ── Peer Clusters ──────────────────────────────────────────
+
+    /// List connected peer clusters.
+    async fn list_peers(&self) -> Result<Vec<PeerInfo>> {
+        Ok(Vec::new())
+    }
+
+    /// Get playlists from a specific peer (shared playlists only).
+    async fn get_peer_playlists(&self, _peer_name: &str) -> Result<Vec<PlaylistIndexEntry>> {
+        Ok(Vec::new())
+    }
+
+    /// Get a specific playlist from a peer.
+    async fn get_peer_playlist(
+        &self,
+        _peer_name: &str,
+        _playlist_id: &str,
+    ) -> Result<Option<SyncedPlaylist>> {
+        Ok(None)
+    }
+
     // ── Sync ────────────────────────────────────────────────────────
 
     /// Poll for remote changes since last check.
@@ -132,4 +184,22 @@ pub trait DriftStorage: Send + Sync {
     async fn poll_changes(&self) -> Result<Vec<SyncEvent>> {
         Ok(Vec::new())
     }
+}
+
+/// Info about a peer cluster.
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub name: String,
+    pub cluster_id: String,
+    pub enabled: bool,
+    pub sync_status: PeerSyncStatus,
+}
+
+/// Sync status of a peer cluster subscription.
+#[derive(Debug, Clone)]
+pub enum PeerSyncStatus {
+    Synced,
+    Syncing,
+    Error(String),
+    Disabled,
 }

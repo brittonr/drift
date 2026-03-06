@@ -51,6 +51,12 @@ impl App {
                         ));
                     }
                 }
+                SyncEvent::PlaylistChanged { playlist_id } => {
+                    self.add_debug(format!("⟳ Playlist updated: {}", playlist_id));
+                }
+                SyncEvent::PlaylistDeleted { playlist_id } => {
+                    self.add_debug(format!("⟳ Playlist deleted: {}", playlist_id));
+                }
             }
         }
     }

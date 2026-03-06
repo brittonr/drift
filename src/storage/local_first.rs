@@ -22,7 +22,7 @@ use tracing;
 use super::local::LocalStorage;
 use super::merge::{self, QueueMergeResult};
 use super::wal::{ReplicationOp, WalManager};
-use super::{BlobRef, DriftStorage, SyncEvent};
+use super::{BlobRef, DriftStorage, PlaylistIndexEntry, SyncEvent, SyncedPlaylist};
 use crate::config::StorageConfig;
 use crate::history_db::HistoryEntry;
 use crate::queue_persistence::PersistedQueue;
@@ -245,6 +245,44 @@ impl DriftStorage for LocalFirstStorage {
 
     async fn load_search_history(&self, max_size: usize) -> Result<SearchHistory> {
         self.local.load_search_history(max_size).await
+    }
+
+    // ── Playlists ─────────────────────────────────────────────────────────
+
+    async fn save_playlist(&self, playlist: &SyncedPlaylist) -> Result<()> {
+        // Stamp with our device ID and Lamport clock
+        let mut stamped = playlist.clone();
+        stamped.device_id = self.device_id.clone();
+        stamped.lamport_clock = self.next_lamport();
+        stamped.updated_at_ms = chrono::Utc::now().timestamp_millis() as u64;
+
+        // Write to local first
+        self.local.save_playlist(&stamped).await?;
+
+        // Queue for remote replication
+        self.queue_replication(ReplicationOp::SavePlaylist(stamped));
+        Ok(())
+    }
+
+    async fn load_playlist(&self, playlist_id: &str) -> Result<Option<SyncedPlaylist>> {
+        // Always read from local
+        self.local.load_playlist(playlist_id).await
+    }
+
+    async fn list_playlists(&self) -> Result<Vec<PlaylistIndexEntry>> {
+        // Always read from local
+        self.local.list_playlists().await
+    }
+
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+        // Delete from local first
+        self.local.delete_playlist(playlist_id).await?;
+
+        // Queue for remote replication
+        self.queue_replication(ReplicationOp::DeletePlaylist {
+            playlist_id: playlist_id.to_string(),
+        });
+        Ok(())
     }
 
     // ── Blob Storage ────────────────────────────────────────────────────

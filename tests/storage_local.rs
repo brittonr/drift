@@ -351,3 +351,190 @@ async fn test_poll_changes_returns_empty() -> Result<()> {
     assert!(changes.is_empty());
     Ok(())
 }
+
+// ── Playlist storage ─────────────────────────────────────────────────
+
+use drift::storage::{PlaylistVisibility, SyncedPlaylist, SyncedTrackRef, PlaylistIndexEntry};
+
+fn create_test_playlist(id: &str, title: &str) -> SyncedPlaylist {
+    SyncedPlaylist {
+        id: id.to_string(),
+        title: title.to_string(),
+        description: None,
+        tracks: Vec::new(),
+        created_at_ms: 1000,
+        updated_at_ms: 1000,
+        lamport_clock: 1,
+        device_id: "test-device".to_string(),
+        visibility: PlaylistVisibility::Shared,
+    }
+}
+
+fn create_test_track_ref(id: &str, service: &str) -> SyncedTrackRef {
+    SyncedTrackRef {
+        id: id.to_string(),
+        service: service.to_string(),
+        title: format!("Track {}", id),
+        artist: "Artist".to_string(),
+        album: "Album".to_string(),
+        duration_seconds: 200,
+        cover_art_url: None,
+        added_at_ms: 1000,
+        added_by: "test-device".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn test_save_and_load_playlist() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+
+    let mut playlist = create_test_playlist("pl1", "My Favorites");
+    playlist.tracks.push(create_test_track_ref("t1", "tidal"));
+    playlist.tracks.push(create_test_track_ref("t2", "youtube"));
+
+    storage.save_playlist(&playlist).await?;
+
+    let loaded = storage.load_playlist("pl1").await?;
+    assert!(loaded.is_some());
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.id, "pl1");
+    assert_eq!(loaded.title, "My Favorites");
+    assert_eq!(loaded.tracks.len(), 2);
+    assert_eq!(loaded.tracks[0].id, "t1");
+    assert_eq!(loaded.tracks[1].id, "t2");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_load_playlist_not_found() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+    let loaded = storage.load_playlist("nonexistent").await?;
+    assert!(loaded.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_playlists_empty() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+    let playlists = storage.list_playlists().await?;
+    assert!(playlists.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_playlists_after_save() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+
+    let pl1 = create_test_playlist("pl1", "Favorites");
+    let mut pl2 = create_test_playlist("pl2", "Workout");
+    pl2.tracks.push(create_test_track_ref("t1", "tidal"));
+    pl2.tracks.push(create_test_track_ref("t2", "tidal"));
+
+    storage.save_playlist(&pl1).await?;
+    storage.save_playlist(&pl2).await?;
+
+    let playlists = storage.list_playlists().await?;
+    assert_eq!(playlists.len(), 2);
+
+    // Find by id (order not guaranteed)
+    let pl1_entry = playlists.iter().find(|p| p.id == "pl1").unwrap();
+    assert_eq!(pl1_entry.title, "Favorites");
+    assert_eq!(pl1_entry.track_count, 0);
+
+    let pl2_entry = playlists.iter().find(|p| p.id == "pl2").unwrap();
+    assert_eq!(pl2_entry.title, "Workout");
+    assert_eq!(pl2_entry.track_count, 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_update_existing_playlist() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+
+    let mut playlist = create_test_playlist("pl1", "Original");
+    storage.save_playlist(&playlist).await?;
+
+    // Update title and add tracks
+    playlist.title = "Updated Title".to_string();
+    playlist.tracks.push(create_test_track_ref("t1", "tidal"));
+    playlist.updated_at_ms = 2000;
+    storage.save_playlist(&playlist).await?;
+
+    let loaded = storage.load_playlist("pl1").await?.unwrap();
+    assert_eq!(loaded.title, "Updated Title");
+    assert_eq!(loaded.tracks.len(), 1);
+
+    // Index should also be updated
+    let index = storage.list_playlists().await?;
+    assert_eq!(index.len(), 1);
+    assert_eq!(index[0].title, "Updated Title");
+    assert_eq!(index[0].track_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_delete_playlist() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+
+    storage.save_playlist(&create_test_playlist("pl1", "First")).await?;
+    storage.save_playlist(&create_test_playlist("pl2", "Second")).await?;
+
+    assert_eq!(storage.list_playlists().await?.len(), 2);
+
+    storage.delete_playlist("pl1").await?;
+
+    assert_eq!(storage.list_playlists().await?.len(), 1);
+    assert!(storage.load_playlist("pl1").await?.is_none());
+    assert!(storage.load_playlist("pl2").await?.is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_delete_nonexistent_playlist() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+    // Should not error
+    storage.delete_playlist("nonexistent").await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_playlist_visibility() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+
+    let mut playlist = create_test_playlist("pl1", "Private Playlist");
+    playlist.visibility = PlaylistVisibility::Private;
+    storage.save_playlist(&playlist).await?;
+
+    let loaded = storage.load_playlist("pl1").await?.unwrap();
+    assert_eq!(loaded.visibility, PlaylistVisibility::Private);
+
+    let index = storage.list_playlists().await?;
+    assert_eq!(index[0].visibility, PlaylistVisibility::Private);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_playlist_with_unicode() -> Result<()> {
+    let storage = LocalStorage::new_for_test(3600)?;
+
+    let mut playlist = create_test_playlist("pl-jp", "日本の音楽");
+    playlist.description = Some("お気に入りの曲".to_string());
+    playlist.tracks.push(SyncedTrackRef {
+        id: "t1".to_string(),
+        service: "tidal".to_string(),
+        title: "桜".to_string(),
+        artist: "アーティスト".to_string(),
+        album: "アルバム".to_string(),
+        duration_seconds: 300,
+        cover_art_url: None,
+        added_at_ms: 1000,
+        added_by: "test".to_string(),
+    });
+    storage.save_playlist(&playlist).await?;
+
+    let loaded = storage.load_playlist("pl-jp").await?.unwrap();
+    assert_eq!(loaded.title, "日本の音楽");
+    assert_eq!(loaded.description, Some("お気に入りの曲".to_string()));
+    assert_eq!(loaded.tracks[0].title, "桜");
+    Ok(())
+}

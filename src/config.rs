@@ -56,6 +56,37 @@ pub struct StorageConfig {
     /// Prefer local files for playback when available (default: true).
     /// When true, downloaded tracks are used instead of streaming, even when online.
     pub prefer_local_files: bool,
+    /// Peer cluster subscriptions for sharing playlists across users.
+    /// Each peer is another user's Aspen cluster that we subscribe to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub peers: Vec<PeerConfig>,
+}
+
+/// A peer cluster subscription for cross-user playlist sharing.
+///
+/// Peers are other Aspen clusters whose shared playlists will be
+/// replicated to our cluster. Peer data is read-only — we never
+/// write to a peer's key namespace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerConfig {
+    /// Human-readable name for this peer (e.g., "alice", "bob")
+    pub name: String,
+    /// Aspen cluster ticket for the peer's cluster
+    pub ticket: String,
+    /// Whether this peer subscription is active (default: true)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Sync priority — lower values win conflicts (default: 10)
+    #[serde(default = "default_priority")]
+    pub priority: u32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_priority() -> u32 {
+    10
 }
 
 impl Default for StorageConfig {
@@ -69,6 +100,7 @@ impl Default for StorageConfig {
             wal_max_age_days: 7,
             metadata_cache_ttl_minutes: 60,
             prefer_local_files: true,
+            peers: Vec::new(),
         }
     }
 }
@@ -473,5 +505,83 @@ foo = "bar"
         // Note: by default serde will error on unknown fields unless we use #[serde(deny_unknown_fields)]
         // Since we didn't add that, this should succeed
         assert!(result.is_ok());
+    }
+
+    // ── Peer config ──────────────────────────────────────────────
+
+    #[test]
+    fn test_peer_config_parsing() {
+        let toml = r#"
+[storage]
+sync_enabled = true
+cluster_ticket = "my-ticket"
+
+[[storage.peers]]
+name = "alice"
+ticket = "alice-ticket-123"
+
+[[storage.peers]]
+name = "bob"
+ticket = "bob-ticket-456"
+enabled = false
+priority = 5
+"#;
+
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.storage.peers.len(), 2);
+
+        let alice = &config.storage.peers[0];
+        assert_eq!(alice.name, "alice");
+        assert_eq!(alice.ticket, "alice-ticket-123");
+        assert!(alice.enabled); // default
+        assert_eq!(alice.priority, 10); // default
+
+        let bob = &config.storage.peers[1];
+        assert_eq!(bob.name, "bob");
+        assert_eq!(bob.ticket, "bob-ticket-456");
+        assert!(!bob.enabled);
+        assert_eq!(bob.priority, 5);
+    }
+
+    #[test]
+    fn test_peer_config_empty_by_default() {
+        let config = Config::default();
+        assert!(config.storage.peers.is_empty());
+    }
+
+    #[test]
+    fn test_peer_config_not_serialized_when_empty() {
+        let config = Config::default();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        // Empty peers vec should be skipped
+        assert!(!serialized.contains("peers"));
+    }
+
+    #[test]
+    fn test_peer_config_roundtrip() {
+        let mut config = Config::default();
+        config.storage.peers.push(PeerConfig {
+            name: "alice".to_string(),
+            ticket: "ticket-123".to_string(),
+            enabled: true,
+            priority: 10,
+        });
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.storage.peers.len(), 1);
+        assert_eq!(deserialized.storage.peers[0].name, "alice");
+        assert_eq!(deserialized.storage.peers[0].ticket, "ticket-123");
+    }
+
+    #[test]
+    fn test_config_without_peers_section_uses_default() {
+        let toml = r#"
+[storage]
+sync_enabled = false
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.storage.peers.is_empty());
     }
 }

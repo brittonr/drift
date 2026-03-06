@@ -20,6 +20,7 @@
 //! ```
 
 pub mod dedup;
+pub mod playlist;
 pub mod prune;
 pub mod ttl;
 
