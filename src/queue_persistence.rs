@@ -118,16 +118,26 @@ fn get_queue_path() -> Result<PathBuf> {
 }
 
 pub fn save_queue(queue: &PersistedQueue) -> Result<()> {
-    let path = get_queue_path()?;
+    save_queue_to(queue, &get_queue_path()?)
+}
+
+pub fn save_queue_to(queue: &PersistedQueue, path: &PathBuf) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("Failed to create queue directory")?;
+    }
     let contents = toml::to_string_pretty(queue)
         .context("Failed to serialize queue to TOML")?;
-    fs::write(&path, contents)
+    fs::write(path, contents)
         .context("Failed to write queue file")?;
     Ok(())
 }
 
 pub fn load_queue() -> Result<Option<PersistedQueue>> {
-    let path = get_queue_path()?;
+    load_queue_from(&get_queue_path()?)
+}
+
+pub fn load_queue_from(path: &PathBuf) -> Result<Option<PersistedQueue>> {
+    let path = path;
 
     if !path.exists() {
         return Ok(None);
