@@ -1,5 +1,26 @@
 {
   "nodes": {
+    "flake-parts": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "unit2nix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1772408722,
+        "narHash": "sha256-rHuJtdcOjK7rAHpHphUb1iCvgkU3GpfvicLMwwnfMT0=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "f20dc5d9b8027381c474144ecabc9034d6a839a3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1772624091,
@@ -45,16 +66,17 @@
     },
     "unit2nix": {
       "inputs": {
+        "flake-parts": "flake-parts",
         "nixpkgs": [
           "nixpkgs"
         ]
       },
       "locked": {
-        "lastModified": 1772755087,
-        "narHash": "sha256-ko7yG3Cyh8bJulomwYttnsgxTuhMj7ymYPyW4QHwOvU=",
+        "lastModified": 1773697329,
+        "narHash": "sha256-+AnZge6p7edhPj/CyxLWc0VnNAv1Bym/RUn4+7Nccpk=",
         "owner": "brittonr",
         "repo": "unit2nix",
-        "rev": "8619cc287af6b93b5112a889f09423b8bad4cc11",
+        "rev": "12804026e4912d03553c56a080217d94867e6c8a",
         "type": "github"
       },
       "original": {

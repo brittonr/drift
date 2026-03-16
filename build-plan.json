@@ -10,7 +10,8 @@
   "workspaceMembers": {
     "drift": "path+file:///home/brittonr/git/drift#0.1.0"
   },
-  "cargoLockHash": "980a19c49de57d499d4e5543c47ba4a6df370fbaf3e584961ea0005f1822aa11",
+  "cargoLockHash": "beef5c7ccebca58ee775165cd5336fbc71322f7e45118ac8d67f4b0aa9798188",
+  "inputsHash": "fd6a8c05fe7167b150e3b6c61d0f5c6948787c38175d576d3b04d3f19a45dcf1",
   "crates": {
     "path+file:///home/brittonr/git/drift#0.1.0": {
       "crateName": "drift",
@@ -88,6 +89,10 @@
         {
           "packageId": "registry+https://github.com/rust-lang/crates.io-index#rand@0.8.5",
           "externCrateName": "rand"
+        },
+        {
+          "packageId": "path+file:///home/brittonr/git/subwayrat/crates/rat-widgets#0.1.0",
+          "externCrateName": "rat_widgets"
         },
         {
           "packageId": "registry+https://github.com/rust-lang/crates.io-index#ratatui@0.30.0",
@@ -193,6 +198,45 @@
       "crateBin": [],
       "links": null,
       "description": "Drift music player server-side plugin for Aspen clusters"
+    },
+    "path+file:///home/brittonr/git/subwayrat/crates/rat-widgets#0.1.0": {
+      "crateName": "rat-widgets",
+      "version": "0.1.0",
+      "edition": "2024",
+      "sha256": null,
+      "source": {
+        "type": "git",
+        "url": "https://github.com/brittonr/subwayrat.git",
+        "rev": "52176c69f21afe948c84f2dbe411d984e18f67a8",
+        "subDir": "crates/rat-widgets",
+        "sha256": "0shz0hfv22z1r6s9wrz8dc7cjab3ni9psbrc3i2jrw09zn22rcpa"
+      },
+      "features": [
+        "default",
+        "persistence"
+      ],
+      "dependencies": [
+        {
+          "packageId": "registry+https://github.com/rust-lang/crates.io-index#ratatui@0.30.0",
+          "externCrateName": "ratatui"
+        },
+        {
+          "packageId": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.148",
+          "externCrateName": "serde_json"
+        }
+      ],
+      "buildDependencies": [],
+      "procMacro": false,
+      "build": null,
+      "libPath": null,
+      "libName": null,
+      "libCrateTypes": [
+        "lib"
+      ],
+      "crateBin": [],
+      "links": null,
+      "description": "Small reusable TUI widgets for ratatui: dialogs, spinner, notifications, tree view, scroll state",
+      "license": "MIT"
     },
     "registry+https://github.com/rust-lang/crates.io-index#adler2@2.0.1": {
       "crateName": "adler2",
