@@ -207,9 +207,9 @@
       "source": {
         "type": "git",
         "url": "https://github.com/brittonr/subwayrat.git",
-        "rev": "52176c69f21afe948c84f2dbe411d984e18f67a8",
+        "rev": "4320b6de45a9ab18f01f4631b69551efa18c52b7",
         "subDir": "crates/rat-widgets",
-        "sha256": "0shz0hfv22z1r6s9wrz8dc7cjab3ni9psbrc3i2jrw09zn22rcpa"
+        "sha256": "1kf0sd63hvd9l0f4rxvnkq4wnwcnphmj5d42dvi5jl2lby5f6v9p"
       },
       "features": [
         "default",
