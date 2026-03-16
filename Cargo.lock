@@ -1548,6 +1548,7 @@ dependencies = [
  "metaflac",
  "nucleo",
  "rand 0.8.5",
+ "rat-widgets",
  "ratatui",
  "ratatui-image",
  "redb",
@@ -4500,6 +4501,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.4",
+]
+
+[[package]]
+name = "rat-widgets"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde_json",
 ]
 
 [[package]]

@@ -17,6 +17,9 @@ metaflac = "0.2"
 ratatui = "0.30"
 crossterm = "0.28"
 
+# Shared TUI widgets (scrollable list, tab bar, progress bar, text input, dialogs)
+rat-widgets = { path = "../subwayrat/crates/rat-widgets" }
+
 # MPD control (uses mpc CLI, not mpd_client)
 
 # Utilities

@@ -1,3 +1,4 @@
+use rat_widgets::TextInput;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -83,41 +84,46 @@ pub fn render_search_view(
     };
 
     // Search input box with enhanced hints
-    let title = if state.is_searching {
+    let search_title = if state.is_searching {
         "Search (Enter: search | Up/Down: history | Esc: cancel)"
     } else {
         "Search (/: search | Ctrl+F: filter | Tab: cycle results)"
     };
 
-    let search_input = Paragraph::new(state.search_query)
-        .style(if state.is_searching {
+    let search_block = Block::default()
+        .borders(Borders::ALL)
+        .title(search_title)
+        .border_style(if state.is_searching {
+            Style::default().fg(theme.warning())
+        } else {
+            Style::default().fg(theme.border_normal())
+        });
+
+    let search_input = TextInput::new()
+        .with_value(state.search_query)
+        .with_focused(state.is_searching)
+        .with_focused_border(theme.warning())
+        .with_unfocused_border(theme.border_normal())
+        .with_text_style(if state.is_searching {
             Style::default().fg(theme.warning())
         } else {
             Style::default()
-        })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(if state.is_searching {
-                    Style::default().fg(theme.warning())
-                } else {
-                    Style::default().fg(theme.border_normal())
-                }),
-        );
-    f.render_widget(search_input, search_chunks[0]);
+        });
+    search_input.render(f, search_chunks[0], Some(search_block));
 
     // Filter input box (when active)
     if state.filter_active {
-        let filter_input = Paragraph::new(state.filter_query)
-            .style(Style::default().fg(theme.secondary()))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Filter (Ctrl+F: close | type to fuzzy filter)")
-                    .border_style(Style::default().fg(theme.secondary())),
-            );
-        f.render_widget(filter_input, search_chunks[1]);
+        let filter_block = Block::default()
+            .borders(Borders::ALL)
+            .title("Filter (Ctrl+F: close | type to fuzzy filter)")
+            .border_style(Style::default().fg(theme.secondary()));
+
+        let filter_input = TextInput::new()
+            .with_value(state.filter_query)
+            .with_focused(true)
+            .with_focused_border(theme.secondary())
+            .with_text_style(Style::default().fg(theme.secondary()));
+        filter_input.render(f, search_chunks[1], Some(filter_block));
     }
 
     // Service filter indicator

@@ -1,3 +1,4 @@
+use rat_widgets::WidgetTheme;
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 
@@ -145,6 +146,23 @@ impl Theme {
     /// Background color (dark terminals default to black)
     pub fn background(&self) -> Color {
         Color::Black
+    }
+
+    /// Convert to a `rat_widgets::WidgetTheme` for shared widget rendering.
+    pub fn to_widget_theme(&self) -> WidgetTheme {
+        WidgetTheme {
+            primary: self.primary(),
+            secondary: self.secondary(),
+            success: self.success(),
+            warning: self.warning(),
+            error: self.error(),
+            text: self.text(),
+            text_muted: self.text_muted(),
+            text_disabled: self.text_disabled(),
+            border_focused: self.border_focused(),
+            border_normal: self.border_normal(),
+            background: self.background(),
+        }
     }
 
     // Style helpers

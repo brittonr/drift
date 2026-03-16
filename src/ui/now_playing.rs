@@ -1,3 +1,4 @@
+use rat_widgets::ProgressBar;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -147,32 +148,13 @@ pub fn render_now_playing(
             0.0
         };
 
-        let bar_width = info_area.width.saturating_sub(20).max(40) as usize;
-        let filled = (progress * bar_width as f64) as usize;
-        let empty = bar_width.saturating_sub(filled);
+        // Reserve a line in the paragraph; ProgressBar renders over it.
+        let bar_width = info_area.width.saturating_sub(8) as u16;
+        let bar_x = info_area.x + 3;
+        let bar_y = info_area.y + 5; // line index 4 (0-based) after block border
+        progress_bar_area = Some(Rect::new(bar_x, bar_y, bar_width, 1));
 
-        let filled_str = "=".repeat(filled);
-        let empty_str = "-".repeat(empty);
-
-        let progress_bar_x = info_area.x + 10;
-        let progress_bar_y = info_area.y + 5;
-        progress_bar_area = Some(Rect::new(
-            progress_bar_x,
-            progress_bar_y,
-            bar_width as u16,
-            1,
-        ));
-
-        lines.push(Line::from(vec![
-            Span::raw("   "),
-            Span::styled(format!("{:02}:{:02}", elapsed_secs / 60, elapsed_secs % 60), Style::default().fg(theme.text_muted())),
-            Span::raw(" "),
-            Span::styled(filled_str, Style::default().fg(theme.primary())),
-            Span::styled(empty_str, Style::default().fg(theme.text_disabled())),
-            Span::raw(" "),
-            Span::styled(format!("{:02}:{:02}", total_secs / 60, total_secs % 60), Style::default().fg(theme.text_muted())),
-            Span::raw(format!(" ({}%)", (progress * 100.0) as u8)),
-        ]));
+        lines.push(Line::from("")); // placeholder — ProgressBar renders here
 
         let queue_info = if state.local_queue_len > 1 {
             format!("{} tracks in queue", state.local_queue_len)
@@ -256,6 +238,26 @@ pub fn render_now_playing(
         );
 
     f.render_widget(now_playing, info_area);
+
+    // Render progress bar widget over the placeholder line
+    if let Some(bar_area) = progress_bar_area {
+        if let Some(song) = state.current_song {
+            let elapsed_secs = song.elapsed.as_secs();
+            let total_secs = song.duration.as_secs();
+            let progress = if total_secs > 0 {
+                (elapsed_secs as f64 / total_secs as f64).min(1.0)
+            } else {
+                0.0
+            };
+            let pbar = ProgressBar::new(progress)
+                .with_time_labels(elapsed_secs, total_secs)
+                .with_percentage(true)
+                .with_filled_style(Style::default().fg(theme.primary()))
+                .with_empty_style(Style::default().fg(theme.text_disabled()))
+                .with_label_style(Style::default().fg(theme.text_muted()));
+            pbar.render(f, bar_area);
+        }
+    }
 
     // Render visualizer if present
     if let (Some(viz), Some(viz_area)) = (state.visualizer, visualizer_area) {

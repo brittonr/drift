@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
+use rat_widgets::TabBar;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
 
@@ -73,54 +73,30 @@ pub fn render_library_view(
         .split(area);
 
     // Tab bar
-    let tabs = vec![
-        Span::styled(
-            " Tracks ",
-            if state.library_tab == LibraryTab::Tracks {
-                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            },
-        ),
-        Span::raw(" | "),
-        Span::styled(
-            " Albums ",
-            if state.library_tab == LibraryTab::Albums {
-                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            },
-        ),
-        Span::raw(" | "),
-        Span::styled(
-            " Artists ",
-            if state.library_tab == LibraryTab::Artists {
-                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            },
-        ),
-        Span::raw(" | "),
-        Span::styled(
-            " History ",
-            if state.library_tab == LibraryTab::History {
-                Style::default().fg(theme.warning()).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            },
-        ),
-    ];
-
+    let tab_index = match state.library_tab {
+        LibraryTab::Tracks => 0,
+        LibraryTab::Albums => 1,
+        LibraryTab::Artists => 2,
+        LibraryTab::History => 3,
+    };
     let filter_str = filter_indicator(state.service_filter);
-    let tab_line = Paragraph::new(Line::from(tabs))
-        .block(
-            Block::default()
-                .title(format!("Library{} [Tab: switch | 1/2/3: filter | 0: all | r: refresh]", filter_str))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.primary())),
+    let tab_block = Block::default()
+        .title(format!(
+            "Library{} [Tab: switch | 1/2/3: filter | 0: all | r: refresh]",
+            filter_str
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.primary()));
+
+    let tab_bar = TabBar::new(vec!["Tracks", "Albums", "Artists", "History"])
+        .with_active(tab_index)
+        .with_active_style(
+            Style::default()
+                .fg(theme.warning())
+                .add_modifier(Modifier::BOLD),
         )
-        .alignment(Alignment::Center);
-    f.render_widget(tab_line, library_chunks[0]);
+        .with_border_color(theme.primary());
+    tab_bar.render(f, library_chunks[0], Some(tab_block));
 
     let content_area = library_chunks[1];
 
