@@ -191,6 +191,22 @@ impl AspenStorage {
         })
     }
 
+    /// Initialize peer cluster subscriptions using the underlying client.
+    ///
+    /// Delegates to `PeerClusterManager::init()` which adds each configured
+    /// peer via `AddPeerCluster`, applies `drift:` include filters, and sets
+    /// priority. Idempotent — already-registered peers are skipped.
+    ///
+    /// Called once from the replication task after connecting to Aspen.
+    /// Failures are logged per-peer but don't prevent startup.
+    pub async fn init_peer_clusters(
+        &self,
+        peers: &[crate::config::PeerConfig],
+    ) -> super::peers::PeerClusterManager {
+        let conn = self.connection.read().await;
+        super::peers::PeerClusterManager::init(&conn.client, peers).await
+    }
+
     /// Attempt to reconnect to the Aspen cluster
     async fn try_reconnect(&self) -> Result<()> {
         let mut conn = self.connection.write().await;

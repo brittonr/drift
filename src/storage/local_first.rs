@@ -390,15 +390,9 @@ async fn spawn_replication_task(
         }
     };
 
-    // TODO: Initialize PeerClusterManager here once AspenStorage exposes
-    // the raw AspenClient (needed for AddPeerCluster / UpdatePeerClusterFilter).
-    // Peer data still flows via Aspen cluster-level replication; this just
-    // skips the subscription filter setup.
+    // Initialize peer cluster subscriptions (idempotent — skips already-registered peers)
     if !config.peers.is_empty() {
-        tracing::info!(
-            "{} peers configured (cluster-level replication active, filter setup pending)",
-            config.peers.len()
-        );
+        let _peer_mgr = aspen.init_peer_clusters(&config.peers).await;
     }
 
     // Drain any WAL entries accumulated while Aspen was disconnected
