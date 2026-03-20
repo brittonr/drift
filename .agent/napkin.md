@@ -12,6 +12,7 @@
 ## Patterns That Work
 - unit2nix incremental builds work: changing src/main.rs only rebuilds `rust_drift` derivation (~81s), all dependency crates stay cached in nix store
 - `nix build .#default -L` shows exactly which derivations rebuild
+- Replication task design: Arc-wrap LocalStorage + WalManager, pass to tokio::spawn. mpsc channel for SyncEvents. poll_changes() drains channel via try_recv(). Merge functions are pure (merge.rs), task applies results to local storage.
 
 ## Patterns That Don't Work
 - redb AccessGuard borrows: must read value into owned type, drop guard, THEN mutate the table (can't hold immutable borrow while inserting)
