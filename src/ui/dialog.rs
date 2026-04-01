@@ -23,7 +23,7 @@ pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect, theme
         DialogMode::None => {}
         DialogMode::CreatePlaylist => {
             let mut dlg = InputDialog::new("Create New Playlist");
-            dlg.value = state.input_text.to_string();
+            dlg.model.value = state.input_text.to_string();
             dlg.render_themed(f, area, &wt);
         }
         DialogMode::AddToPlaylist { track_title, .. } => {
@@ -42,7 +42,7 @@ pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect, theme
                 format!("Add to Playlist: {}", truncate_str(track_title, 30)),
                 items,
             );
-            dlg.selected = state.selected_index;
+            dlg.model.selected = state.selected_index;
             dlg.render_themed(f, area, &wt);
         }
         DialogMode::RenamePlaylist { playlist_title, .. } => {
@@ -50,7 +50,7 @@ pub fn render_dialog(f: &mut Frame, state: &DialogRenderState, area: Rect, theme
                 "Rename: {}",
                 truncate_str(playlist_title, 25)
             ));
-            dlg.value = state.input_text.to_string();
+            dlg.model.value = state.input_text.to_string();
             dlg.render_themed(f, area, &wt);
         }
         DialogMode::ConfirmDeletePlaylist { playlist_title, .. } => {

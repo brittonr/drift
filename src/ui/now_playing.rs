@@ -142,7 +142,7 @@ pub fn render_now_playing(
 
         let elapsed_secs = song.elapsed.as_secs();
         let total_secs = song.duration.as_secs();
-        let progress = if total_secs > 0 {
+        let _progress = if total_secs > 0 {
             (elapsed_secs as f64 / total_secs as f64).min(1.0)
         } else {
             0.0
