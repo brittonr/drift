@@ -93,8 +93,14 @@
             resolvedJson = ./build-plan.json;
           };
         in
+        let
+          driftBuild = ws.workspaceMembers."drift".build;
+        in
         {
-          default = ws.workspaceMembers."drift".build;
+          default = driftBuild;
+          drift = driftBuild;
+          tidal-db = driftBuild;
+          drift-sync = driftBuild;
         }
       );
 
@@ -102,7 +108,26 @@
         let
           pkgs = mkPkgs system;
         in
+        let
+          driftBuild = self.packages.${system}.default;
+        in
         {
+          default = {
+            type = "app";
+            program = "${driftBuild}/bin/drift";
+          };
+          drift = {
+            type = "app";
+            program = "${driftBuild}/bin/drift";
+          };
+          tidal-db = {
+            type = "app";
+            program = "${driftBuild}/bin/tidal-db";
+          };
+          drift-sync = {
+            type = "app";
+            program = "${driftBuild}/bin/drift-sync";
+          };
           # Regenerate build plan (requires nightly cargo on PATH)
           update-plan = {
             type = "app";
