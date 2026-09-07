@@ -1,0 +1,13 @@
+{
+  "name": "drift-metadata",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-08-18",
+  "durable_objects": {
+    "bindings": [{ "name": "DRIFT_METADATA", "class_name": "DriftMetadata" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DriftMetadata"] }],
+  "vars": {
+    "DRIFT_USER": "",
+    "DRIFT_TOKEN": ""
+  }
+}

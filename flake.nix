@@ -29,14 +29,23 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      mkPkgs = system:
+      mkPkgs =
+        system:
         import nixpkgs {
           inherit system;
           overlays = [ (import rust-overlay) ];
         };
+      mkWorkspace =
+        system:
+        import "${unit2nix}/lib/build-from-unit-graph.nix" {
+          pkgs = mkPkgs system;
+          src = ./.;
+          resolvedJson = ./build-plan.json;
+        };
     in
     {
-      devShells = forAllSystems (system:
+      devShells = forAllSystems (
+        system:
         let
           pkgs = mkPkgs system;
           rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
@@ -47,7 +56,7 @@
           };
           updatePlan = pkgs.writeShellScriptBin "update-plan" ''
             exec ${unit2nix.packages.${system}.unit2nix}/bin/unit2nix \
-              --manifest-path ./Cargo.toml \
+              --manifest-path ./Cargo.toml --include-dev \
               -o build-plan.json
           '';
         in
@@ -82,16 +91,13 @@
         }
       );
 
-      packages = forAllSystems (system:
+      packages = forAllSystems (
+        system:
         let
           pkgs = mkPkgs system;
           # unit2nix per-crate builds (manual mode — no IFD)
           # Regenerate build-plan.json: run `update-plan` in devshell
-          ws = import "${unit2nix}/lib/build-from-unit-graph.nix" {
-            inherit pkgs;
-            src = ./.;
-            resolvedJson = ./build-plan.json;
-          };
+          ws = mkWorkspace system;
         in
         let
           driftBuild = ws.workspaceMembers."drift".build;
@@ -104,7 +110,8 @@
         }
       );
 
-      apps = forAllSystems (system:
+      apps = forAllSystems (
+        system:
         let
           pkgs = mkPkgs system;
         in
@@ -134,7 +141,7 @@
             program = toString (
               pkgs.writeShellScript "update-plan" ''
                 exec ${unit2nix.packages.${system}.unit2nix}/bin/unit2nix \
-                  --manifest-path ./Cargo.toml \
+                  --manifest-path ./Cargo.toml --include-dev \
                   -o build-plan.json
               ''
             );
@@ -143,11 +150,24 @@
       );
 
       # NixOS VM integration tests (Linux only, require KVM)
-      checks = forAllSystems (system:
+      checks = forAllSystems (
+        system:
         let
           pkgs = mkPkgs system;
         in
-        pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        {
+          storage-tests = (mkWorkspace system).test.check.drift;
+          celld-metadata =
+            pkgs.runCommand "drift-celld-metadata-tests"
+              {
+                nativeBuildInputs = [ pkgs.nodejs ];
+              }
+              ''
+                node --test ${./celld}/worker.test.mjs
+                touch "$out"
+              '';
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           mpd-integration = import ./tests/nixos/mpd-integration.nix {
             inherit pkgs;
             drift = self.packages.${system}.default;

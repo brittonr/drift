@@ -27,28 +27,29 @@ pub struct Config {
 /// Storage backend configuration
 ///
 /// Local-first architecture: all reads and writes go to local storage first.
-/// When `sync_enabled = true` and an Aspen cluster ticket is provided,
-/// writes are replicated to the cluster in the background and remote
-/// changes are merged into local state via polling.
+/// S3 stores replicated state and blobs. Celld can coordinate metadata writes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StorageConfig {
-    /// Backend type: "local" or "aspen" (deprecated — use sync_enabled instead).
-    /// Kept for backward compatibility. When backend = "aspen", implies sync_enabled = true.
+    /// Use "local" with sync_enabled, or "s3". Legacy "aspen" fails validation.
     pub backend: String,
-    /// Enable cross-device sync via Aspen distributed KV.
-    /// When true, local storage is used for all reads/writes with background
-    /// replication to the Aspen cluster.
+    /// Enable background replication to S3-compatible storage.
     pub sync_enabled: bool,
-    /// Aspen cluster ticket (required when sync_enabled = true)
+    /// Non-secret S3 and Celld connection configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<crate::storage::settings::S3Config>,
+    /// Device identity is separate from the shared account namespace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    /// Legacy field retained to report an explicit migration error.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster_ticket: Option<String>,
-    /// User ID for Aspen key namespacing (default: hostname)
+    /// Shared S3 account namespace. Required when sync is enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     /// Maximum pending write-ahead log entries (default: 1000)
     pub wal_max_entries: usize,
-    /// Maximum age of WAL entries in days before pruning (default: 7)
+    /// Legacy retention field. Startup never expires unconfirmed entries.
     pub wal_max_age_days: u32,
     /// Metadata cache TTL in minutes (playlists, favorites, albums, artists).
     /// Cached data is served immediately; stale data triggers background refresh.
@@ -94,6 +95,8 @@ impl Default for StorageConfig {
         Self {
             backend: "local".to_string(),
             sync_enabled: false,
+            s3: None,
+            device_id: None,
             cluster_ticket: None,
             user_id: None,
             wal_max_entries: 1000,
@@ -106,10 +109,30 @@ impl Default for StorageConfig {
 }
 
 impl StorageConfig {
-    /// Whether sync should be attempted. Handles backward compatibility
-    /// with the old `backend = "aspen"` config.
+    /// Legacy sync requests still reach validation instead of silently disabling sync.
     pub fn wants_sync(&self) -> bool {
-        self.sync_enabled || self.backend == "aspen"
+        self.sync_enabled || self.backend == "s3" || self.backend == "aspen"
+    }
+
+    pub fn resolved_device_id(&self) -> String {
+        self.device_id.clone().unwrap_or_else(|| {
+            hostname::get()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "drift-device".into())
+        })
+    }
+
+    pub fn validate_sync(&self) -> Result<()> {
+        if !self.wants_sync() {
+            return Ok(());
+        }
+        anyhow::ensure!(self.backend != "aspen" && self.cluster_ticket.is_none(),
+            "Aspen sync is removed; configure storage.s3 and remove cluster_ticket");
+        anyhow::ensure!(self.peers.is_empty(), "Aspen peer tickets cannot be used with S3 sync");
+        let user = self.user_id.as_deref().context("S3 sync requires storage.user_id")?;
+        self.s3.as_ref().context("sync requires storage.s3 configuration")?.validate(user)?;
+        anyhow::ensure!(crate::storage::settings::safe_segment(&self.resolved_device_id()), "invalid storage.device_id");
+        Ok(())
     }
 
     /// Get the resolved user ID (config value or hostname fallback).

@@ -56,7 +56,7 @@ pub struct SyncEngine {
     stats: SyncStats,
     /// Track IDs processed this session (avoids re-checking redb).
     seen_this_run: HashSet<String>,
-    /// Optional Aspen storage for cross-device history sync.
+    /// Optional storage for cross-device history and audio replication.
     storage: Option<Box<dyn DriftStorage>>,
 }
 
@@ -490,7 +490,7 @@ impl SyncEngine {
                     &track.title,
                 );
 
-                // Record to Aspen storage if connected
+                // Queue the tagged file and history in the durable replication log.
                 if let Some(ref storage) = self.storage {
                     let drift_track = crate::service::Track {
                         id: track.id.clone(),
@@ -502,7 +502,10 @@ impl SyncEngine {
                         service: crate::service::ServiceType::Tidal,
                     };
                     if let Err(e) = storage.record_play(&drift_track).await {
-                        eprintln!("    ⚠ Aspen sync: {}", e);
+                        eprintln!("    S3 history queue failed: {}", e);
+                    }
+                    if let Err(e) = storage.upload_blob(&track.id, &dest.to_string_lossy()).await {
+                        eprintln!("    S3 upload queue failed: {}", e);
                     }
                 }
 

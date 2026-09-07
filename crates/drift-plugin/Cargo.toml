@@ -2,7 +2,7 @@
 name = "drift-plugin"
 version = "0.1.0"
 edition = "2021"
-description = "Drift music player server-side plugin for Aspen clusters"
+description = "Pure storage policies and shared playlist types for Drift"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

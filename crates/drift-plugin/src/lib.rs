@@ -1,8 +1,7 @@
-//! Drift server-side plugin for Aspen clusters.
+//! Pure Drift storage policies and shared playlist types.
 //!
-//! Pure data-processing logic for history dedup, search cache TTL,
-//! and history pruning. Designed to run as a WASM plugin on Aspen
-//! clusters, but also callable from client-side code.
+//! History deduplication, cache expiration, and history retention stay independent
+//! of S3, Celld, and local storage adapters.
 //!
 //! # Modules
 //!
@@ -30,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 /// A play history record stored in the cluster KV.
 ///
-/// Matches the `HistoryRecord` in `drift/src/storage/aspen.rs`.
+/// The replication core stores this type without a transport-specific wrapper.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HistoryRecord {
     pub track_id: String,
@@ -46,7 +45,7 @@ pub struct HistoryRecord {
 
 /// A cached search result with timestamp.
 ///
-/// Matches the `CachedSearch` in `drift/src/storage/aspen.rs`.
+/// This type remains available for legacy cache readers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CachedSearch {
     #[serde(rename = "r")]

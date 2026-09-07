@@ -84,6 +84,12 @@ impl LocalStorage {
         })
     }
 
+    pub fn import_history(&self, records: &[drift_plugin::HistoryRecord]) -> Result<()> {
+        self.history.as_ref().context("history database is unavailable")?
+            .lock().map_err(|_| anyhow::anyhow!("history database lock poisoned"))?
+            .import_records(records)
+    }
+
     /// Open the playlist redb database.
     fn open_playlist_db() -> Result<Database> {
         let data_dir = dirs::data_dir()

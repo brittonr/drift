@@ -156,6 +156,43 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Import remote plays without replacing their original timestamps.
+    pub fn import_records(&self, records: &[drift_plugin::HistoryRecord]) -> Result<()> {
+        for record in records {
+            let timestamp = i64::try_from(record.played_at_ms)?;
+            anyhow::ensure!(DateTime::from_timestamp_millis(timestamp).is_some(), "invalid remote history timestamp");
+            record.service.parse::<ServiceType>().map_err(|_| anyhow::anyhow!("invalid remote history service"))?;
+        }
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(HISTORY_TABLE)?;
+            for record in records {
+                let window = drift_plugin::DEFAULT_DEDUP_WINDOW_MS;
+                let lower = record.played_at_ms.saturating_sub(window);
+                let upper = record.played_at_ms.saturating_add(window);
+                let mut duplicate = false;
+                for entry in table.range(lower..=upper)? {
+                    let (_, value) = entry?;
+                    let existing: StoredEntry = serde_json::from_slice(value.value())?;
+                    if existing.track_id == record.track_id && existing.service == record.service {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if duplicate { continue; }
+                let bytes = serde_json::to_vec(record)?;
+                let mut key = record.played_at_ms;
+                while table.get(key)?.is_some() {
+                    key = key.checked_add(1).context("history key space exhausted")?;
+                }
+                table.insert(key, bytes.as_slice())?;
+            }
+        }
+        txn.commit()?;
+        self.prune_old_entries()?;
+        Ok(())
+    }
+
     pub fn get_recent(&self, limit: usize) -> Result<Vec<HistoryEntry>> {
         let rtxn = self.db.begin_read()?;
         let table = rtxn.open_table(HISTORY_TABLE)?;
@@ -226,6 +263,10 @@ impl HistoryDb {
         Ok(Self { db })
     }
 }
+
+#[cfg(test)]
+#[path = "history_db/import_tests.rs"]
+mod import_tests;
 
 #[cfg(test)]
 mod tests {

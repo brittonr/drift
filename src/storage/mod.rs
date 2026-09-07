@@ -3,9 +3,9 @@
 //! **Architecture: local-first, multiplayer second.**
 //!
 //! - [`LocalStorage`]: redb + TOML + JSON — fast, always-available local persistence
-//! - [`LocalFirstStorage`]: wraps LocalStorage + optional Aspen replication via WAL
+//! - [`LocalFirstStorage`]: wraps LocalStorage and durable S3 replication via WAL
 //! - [`MetadataCache`]: redb-backed cache for service API responses (playlists, favorites)
-//! - [`AspenStorage`]: Aspen distributed KV over iroh QUIC (used by replication task)
+//! - S3 blobs and conditional metadata, with optional Celld coordination.
 //!
 //! All reads come from local storage. All writes go to local first, then queue
 //! for background replication. Remote changes are merged using CRDT semantics.
@@ -16,11 +16,16 @@ pub mod merge;
 pub mod metadata_cache;
 pub mod wal;
 
-#[cfg(feature = "aspen")]
-pub mod aspen;
+pub mod settings;
+pub mod replication;
+pub mod object_port;
 
-#[cfg(feature = "aspen")]
-pub mod peers;
+#[cfg(feature = "s3")]
+pub mod s3;
+#[cfg(feature = "s3")]
+mod s3_adapter;
+#[cfg(feature = "s3")]
+mod replication_task;
 
 use anyhow::Result;
 use async_trait::async_trait;

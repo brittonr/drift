@@ -18,7 +18,7 @@ ratatui = "0.30"
 crossterm = "0.28"
 
 # Shared TUI widgets (scrollable list, tab bar, progress bar, text input, dialogs)
-rat-widgets = { path = "../subwayrat/crates/rat-widgets" }
+rat-widgets = { git = "ssh://git@github.com/brittonr/subwayrat.git", rev = "2e52b3150819a2365aaefd3dcf8bbd2a2fa2e901" }
 
 # MPD control (uses mpc CLI, not mpd_client)
 
@@ -67,16 +67,15 @@ hostname = "0.4"
 # Server-side plugin logic (dedup, TTL, pruning) — also usable client-side
 drift-plugin = { path = "crates/drift-plugin" }
 
-# Aspen distributed backend (optional)
-aspen-client = { path = "../aspen/crates/aspen-client", optional = true }
-aspen-client-api = { path = "../aspen/crates/aspen-client-api", optional = true, default-features = false }
+# S3-compatible object storage (AWS SigV4 signing stays in the SDK).
+object_store = { version = "0.12", features = ["aws"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 
 [features]
-default = []
-aspen = ["dep:aspen-client", "dep:aspen-client-api"]
+default = ["s3"]
+s3 = ["dep:object_store"]
 
 [lib]
 name = "drift"

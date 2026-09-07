@@ -2,7 +2,7 @@
 
 A terminal music player for **Tidal**, **YouTube**, and **Bandcamp** with an MPD backend.
 
-Drift is **local-first, multiplayer second**: everything works offline with local storage, and cross-device sync via Aspen is an optional layer on top — never a dependency.
+Drift keeps playback state locally. Optional cross-device sync uses S3-compatible storage, including RustFS. Celld can coordinate metadata writes.
 
 ## Features
 
@@ -12,7 +12,7 @@ Drift is **local-first, multiplayer second**: everything works offline with loca
 - **Playlist management** — create, rename, sync, and manage playlists across services
 - **Download management** — queue downloads, track progress, content-dedup via BLAKE3
 - **Offline playback** — downloaded tracks are preferred automatically, queue restore works without network
-- **Cross-device sync** — optional background replication to Aspen distributed KV with CRDT merge
+- **Cross-device sync** — durable background replication to S3, with optional Celld metadata coordination
 - **Metadata cache** — playlists, favorites, albums, artists cached locally for instant offline access
 - **Album art** — sixel/kitty protocol image rendering in-terminal
 - **CAVA visualizer** — live audio visualizer integration
@@ -38,8 +38,11 @@ nix run .#drift
 # Cargo
 cargo build --release
 
-# With Aspen distributed sync
-cargo build --release --features aspen
+# S3 support is enabled by default
+cargo build --release --features s3
+
+# Local-only build
+cargo build --release --no-default-features
 ```
 
 ## Configuration
@@ -100,13 +103,13 @@ hwdec = "auto"
 
 [storage]
 backend = "local"                # always local-first
-sync_enabled = false             # enable Aspen cross-device sync
-# cluster_ticket = "..."        # required when sync_enabled = true
-# user_id = "hostname"          # defaults to hostname
+sync_enabled = false             # enable S3 replication after configuration
+# user_id = "alice"             # same account name on each device
+# device_id = "laptop"          # unique device name; defaults to hostname
 prefer_local_files = true        # use downloaded files instead of streaming
 metadata_cache_ttl_minutes = 60  # how long cached playlists/favorites stay fresh
 wal_max_entries = 1000           # max pending sync operations
-wal_max_age_days = 7             # auto-prune old WAL entries
+wal_max_age_days = 7             # legacy field; pending writes never expire automatically
 
 [theme]
 # preset = "catppuccin-mocha"  # or: nord, dracula, gruvbox, solarized, tokyo-night
@@ -115,6 +118,8 @@ wal_max_age_days = 7             # auto-prune old WAL entries
 # secondary = "#cba6f7"
 # background = "#1e1e2e"
 ```
+
+S3 and Celld configuration, credential scope, and migration limits are in [the storage runbook](docs/storage-s3.md).
 
 ## Keybindings
 
@@ -205,7 +210,7 @@ drift/
 │   ├── ui/                 # Ratatui TUI rendering
 │   ├── handlers/           # Keyboard input handling
 │   ├── service/            # Music service backends (Tidal, YouTube, Bandcamp)
-│   ├── storage/            # DriftStorage trait + local/aspen backends
+│   ├── storage/            # Local storage, replication core, S3/Celld adapters
 │   ├── sync/               # Bulk library sync engine
 │   ├── config.rs           # Configuration types
 │   ├── downloads.rs        # Download management
@@ -225,19 +230,20 @@ App reads/writes ──► LocalFirstStorage
                      ├─ LocalStorage (redb)     ◄── all reads, all writes (always)
                      ├─ MetadataCache (redb)     ◄── playlists, favorites, albums, artists
                      ├─ WalManager (redb)        ◄── persistent write-ahead log for sync
-                     └─ AspenStorage (optional)  ◄── background replication via QUIC
+                     └─ S3Storage (optional)     ◄── S3 blobs + S3 or Celld metadata
 ```
 
 The `DriftStorage` trait abstracts all persistence. `LocalFirstStorage` is the default backend:
 
-- **Every read** comes from local storage — never blocks on network
-- **Every write** goes to local first, then queued for remote replication via WAL
-- **Remote changes** are merged using CRDT semantics (Lamport clocks for queue, set-union for history)
+- **Playback metadata reads** use local storage. Explicit remote blob requests use the network.
+- **Local writes** queue for replication when sync is enabled.
+- **Remote queues** use Lamport order. History uses stable play identities. Playlist writes and tombstones use deterministic last-write order.
 - **Pending operations** survive restart — the WAL is a redb database, not in-memory
 - **Metadata cache** stores playlists, favorites, albums, artists with TTL-based staleness
 - **Playback prefers local files** — downloaded tracks play instantly without API calls
 
-Key schema: `drift:{user}:history:{timestamp}`, `drift:{user}:queue`, `drift:{user}:search:{hash}`, `drift:{user}:search_history`
+S3 keys use `<prefix>/users/<user>/state.json` and `<prefix>/users/<user>/blobs/<blake3>`.
+Celld mode keeps the same blobs and stores the metadata snapshot in a dedicated Durable Object.
 
 ## drift-sync
 
@@ -261,9 +267,22 @@ nix develop
 # Run all tests
 cargo test --workspace
 
-# Run with Aspen feature
-cargo test --workspace --features aspen
+# Run S3 and local-only feature tests
+cargo test --all-targets --all-features
+cargo test --all-targets --no-default-features
+node --test celld/worker.test.mjs
+
+# Regenerate the Nix dependency graph after dependency changes
+nix run .#update-plan
 
 # Build release
-cargo build --release --features aspen
+cargo build --release --features s3
 ```
+
+## References
+
+- [Celld v0.3.0](https://github.com/denoland/celld/tree/v0.3.0): Durable Object host, SQLite API, and durable-write acknowledgement contract.
+- [RustFS](https://github.com/rustfs/rustfs): S3-compatible object storage. The isolated integration test used `1.0.0-rc.2`.
+- [Onix Celld module](../onix-core/modules/celld/): separate fleet credentials, private listeners, and RustFS deployment conventions.
+- [Apache object_store](https://docs.rs/object_store/0.12.5/object_store/): conditional S3 writes and AWS SigV4 signing.
+- [Subwayrat](https://github.com/brittonr/subwayrat/tree/2e52b3150819a2365aaefd3dcf8bbd2a2fa2e901): pinned terminal widgets.

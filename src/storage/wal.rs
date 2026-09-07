@@ -12,6 +12,10 @@ use crate::search::SearchHistory;
 use drift_plugin::playlist::SyncedPlaylist;
 
 const WAL_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("wal_entries");
+const WAL_META_TABLE: TableDefinition<&str, u64> = TableDefinition::new("wal_metadata");
+const NEXT_SEQUENCE_KEY: &str = "next_sequence";
+const WAL_CONTEXT_TABLE: TableDefinition<&str, &str> = TableDefinition::new("wal_context");
+const CONTEXT_KEY: &str = "replication_target";
 
 /// A replication operation to be sent to the remote cluster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +31,9 @@ pub enum ReplicationOp {
     UploadBlob {
         track_id: String,
         file_path: String,
+        /// Bound durably before the first remote write. Old entries bind on replay.
+        #[serde(default)]
+        expected_hash: Option<String>,
     },
     SavePlaylist(SyncedPlaylist),
     DeletePlaylist {
@@ -62,12 +69,11 @@ impl WalManager {
             let table = rtxn.open_table(WAL_TABLE)?;
             // Get the last (highest) key
             let max_key = table.iter()?
-                .rev()
-                .next()
+                .next_back()
                 .transpose()?
                 .map(|(k, _)| k.value())
                 .unwrap_or(0);
-            max_key + 1
+            max_key.checked_add(1).context("WAL sequence exhausted")?
         };
         
         Ok(Self {
@@ -103,6 +109,8 @@ impl WalManager {
     fn init_table(db: &Database) -> Result<()> {
         let txn = db.begin_write()?;
         { let _ = txn.open_table(WAL_TABLE)?; }
+        { let _ = txn.open_table(WAL_META_TABLE)?; }
+        { let _ = txn.open_table(WAL_CONTEXT_TABLE)?; }
         txn.commit()?;
         Ok(())
     }
@@ -113,28 +121,55 @@ impl WalManager {
 
     /// Append a new replication operation. Returns the WAL sequence number.
     pub fn append(&self, op: &ReplicationOp) -> Result<u64> {
-        let seq = {
-            let mut next_seq = self.next_seq.lock().unwrap();
-            let seq = *next_seq;
-            *next_seq += 1;
-            seq
-        };
-
-        let entry = WalEntry {
-            op: op.clone(),
-            created_at_ms: Self::now_ms(),
-            attempts: 0,
-        };
-
+        let mut next_seq = self.next_seq.lock().map_err(|_| anyhow::anyhow!("WAL sequence lock poisoned"))?;
+        let entry = WalEntry { op: op.clone(), created_at_ms: Self::now_ms(), attempts: 0 };
         let json = serde_json::to_vec(&entry)?;
         let txn = self.db.begin_write()?;
+        let seq;
+        let successor;
         {
+            let mut metadata = txn.open_table(WAL_META_TABLE)?;
+            seq = metadata.get(NEXT_SEQUENCE_KEY)?.map_or(*next_seq, |value| value.value());
+            successor = seq.checked_add(1).context("WAL sequence exhausted")?;
+            metadata.insert(NEXT_SEQUENCE_KEY, successor)?;
             let mut table = txn.open_table(WAL_TABLE)?;
+            anyhow::ensure!(table.get(seq)?.is_none(), "WAL sequence would overwrite a pending entry");
             table.insert(seq, json.as_slice())?;
         }
         txn.commit()?;
-
+        *next_seq = successor;
         Ok(seq)
+    }
+
+    /// Prevent queued operations from moving silently to another account or device.
+    pub fn bind_context(&self, identity: &str) -> Result<()> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(WAL_CONTEXT_TABLE)?;
+            let previous = table.get(CONTEXT_KEY)?.map(|value| value.value().to_owned());
+            if let Some(previous) = previous {
+                anyhow::ensure!(previous == identity, "WAL belongs to another replication target; archive or migrate it explicitly");
+            } else {
+                table.insert(CONTEXT_KEY, identity)?;
+            }
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    pub fn is_empty(&self) -> Result<bool> { Ok(self.len()? == 0) }
+
+    /// Persist a content-bound intent before any remote effect.
+    pub fn update_entry(&self, seq: u64, entry: &WalEntry) -> Result<()> {
+        let bytes = serde_json::to_vec(entry)?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(WAL_TABLE)?;
+            anyhow::ensure!(table.get(seq)?.is_some(), "WAL entry disappeared before content binding");
+            table.insert(seq, bytes.as_slice())?;
+        }
+        txn.commit()?;
+        Ok(())
     }
 
     /// Remove a successfully replicated entry by sequence number.
@@ -156,9 +191,9 @@ impl WalManager {
 
         for item in table.iter()? {
             let (key, val) = item?;
-            if let Ok(entry) = serde_json::from_slice::<WalEntry>(val.value()) {
-                entries.push((key.value(), entry));
-            }
+            let entry = serde_json::from_slice::<WalEntry>(val.value())
+                .context("malformed WAL entry; replication stopped without skipping it")?;
+            entries.push((key.value(), entry));
         }
 
         Ok(entries)
@@ -242,6 +277,10 @@ impl WalManager {
         Ok(table.len()? as usize)
     }
 }
+
+#[cfg(test)]
+#[path = "wal/integrity_tests.rs"]
+mod integrity_tests;
 
 #[cfg(test)]
 mod tests {
@@ -424,8 +463,7 @@ mod tests {
                 let rtxn = db.begin_read().unwrap();
                 let table = rtxn.open_table(WAL_TABLE).unwrap();
                 let max_key = table.iter().unwrap()
-                    .rev()
-                    .next()
+                    .next_back()
                     .transpose().unwrap()
                     .map(|(k, _)| k.value())
                     .unwrap_or(0);
@@ -503,6 +541,7 @@ mod tests {
         wal.append(&ReplicationOp::UploadBlob {
             track_id: "track123".to_string(),
             file_path: "/path/to/file.flac".to_string(),
+            expected_hash: None,
         }).unwrap();
         
         assert_eq!(wal.len().unwrap(), 5);
