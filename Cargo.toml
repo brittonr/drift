@@ -70,7 +70,7 @@ drift-plugin = { path = "crates/drift-plugin" }
 # S3-compatible object storage (AWS SigV4 signing stays in the SDK).
 object_store = { version = "0.12", features = ["aws"], optional = true }
 
-[dev-dependencies]
+# Atomic, owner-only credential replacement.
 tempfile = "3"
 
 [features]

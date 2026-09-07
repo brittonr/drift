@@ -6,8 +6,7 @@ use dirs::config_dir;
 use reqwest::{header, Client as HttpClient};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs;
-use std::path::PathBuf;
+mod credentials;
 
 use super::{Album, Artist, CoverArt, MusicService, Playlist, SearchResults, ServiceType, Track};
 
@@ -81,24 +80,11 @@ pub struct TidalClient {
 
 impl TidalClient {
     pub async fn new() -> Result<Self> {
-        let upmpdcli_path = Self::upmpdcli_path()?;
-        let tidal_tui_path = Self::config_path()?;
-
-        let config = if upmpdcli_path.exists() {
-            println!("Loading existing upmpdcli Tidal credentials...");
-            let config = Self::load_config(&upmpdcli_path)?;
-            if !tidal_tui_path.exists() {
-                let contents = fs::read_to_string(&upmpdcli_path)?;
-                fs::write(&tidal_tui_path, contents)?;
-            }
-            Some(config)
-        } else if tidal_tui_path.exists() {
-            println!("Loading existing Tidal credentials...");
-            Some(Self::load_config(&tidal_tui_path)?)
-        } else {
+        let root = config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
+        let config = credentials::load(&root)?;
+        if config.is_none() {
             println!("No Tidal credentials found. Running in demo mode.");
-            None
-        };
+        }
 
         let http_client = HttpClient::new();
 
@@ -109,33 +95,10 @@ impl TidalClient {
         })
     }
 
-    fn config_path() -> Result<PathBuf> {
-        let mut path = config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
-        path.push("drift");
-        fs::create_dir_all(&path)?;
-        path.push("credentials.json");
-        Ok(path)
-    }
-
-    fn upmpdcli_path() -> Result<PathBuf> {
-        let mut path = config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
-        path.push("upmpdcli");
-        path.push("qobuz");
-        path.push("oauth2.credentials.json");
-        Ok(path)
-    }
-
-    fn load_config(path: &PathBuf) -> Result<TidalConfig> {
-        let contents = fs::read_to_string(path)?;
-        let config: TidalConfig = serde_json::from_str(&contents)?;
-        Ok(config)
-    }
-
     pub async fn save_config(&self) -> Result<()> {
         if let Some(ref config) = self.config {
-            let path = Self::config_path()?;
-            let contents = serde_json::to_string_pretty(config)?;
-            fs::write(&path, contents)?;
+            let root = config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
+            credentials::save(&root, config)?;
         }
         Ok(())
     }

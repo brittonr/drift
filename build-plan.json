@@ -11,7 +11,7 @@
     "drift": "path+file:///home/brittonr/git/drift-release#drift@0.1.0"
   },
   "cargoLockHash": "2360f27edf83658a5bafd46300a64df4d22b017c8cbf253b1d62a9f555a7f9ef",
-  "inputsHash": "b21a2967cf5e6736d719ded21d55e3fb4c40fe9d44e755d3b36db68e15aa90bc",
+  "inputsHash": "93d623961fb97296b1800810ed01e442889a832710327e60e14088b6bd12afc7",
   "crates": {
     "git+ssh://git@github.com/brittonr/subwayrat.git?rev=2e52b3150819a2365aaefd3dcf8bbd2a2fa2e901#rat-spinner@0.1.0": {
       "crateName": "rat-spinner",
@@ -198,6 +198,10 @@
           "externCrateName": "serde_json"
         },
         {
+          "packageId": "registry+https://github.com/rust-lang/crates.io-index#tempfile@3.24.0",
+          "externCrateName": "tempfile"
+        },
+        {
           "packageId": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.50.0",
           "externCrateName": "tokio"
         },
@@ -219,12 +223,6 @@
         }
       ],
       "buildDependencies": [],
-      "devDependencies": [
-        {
-          "packageId": "registry+https://github.com/rust-lang/crates.io-index#tempfile@3.24.0",
-          "externCrateName": "tempfile"
-        }
-      ],
       "procMacro": false,
       "build": null,
       "libPath": null,
