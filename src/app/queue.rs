@@ -159,10 +159,12 @@ impl App {
                 return Ok(());
             }
         } else if let Some(ref results) = self.search_results {
-            if self.search.tab == SearchTab::Tracks && self.search.selected_track < results.tracks.len() {
-                results.tracks[self.search.selected_track].clone()
-            } else {
+            if self.search.tab != SearchTab::Tracks {
                 return Ok(());
+            }
+            match results.selected_track(self.search.service_filter, self.search.selected_track) {
+                Some(track) => track.clone(),
+                None => return Ok(()),
             }
         } else {
             return Ok(());

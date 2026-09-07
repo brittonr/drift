@@ -841,8 +841,8 @@ fn handle_add_to_playlist(app: &mut App) {
         }
         ViewMode::Search => {
             if let Some(ref results) = app.search_results {
-                if app.search.tab == SearchTab::Tracks && app.search.selected_track < results.tracks.len() {
-                    Some(results.tracks[app.search.selected_track].clone())
+                if app.search.tab == SearchTab::Tracks {
+                    results.selected_track(app.search.service_filter, app.search.selected_track).cloned()
                 } else {
                     None
                 }

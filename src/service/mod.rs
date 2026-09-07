@@ -2,6 +2,7 @@ pub mod bandcamp;
 pub mod bandcamp_storage;
 pub mod mixed_playlist;
 pub mod multi;
+mod search_selection;
 pub mod tidal;
 pub mod youtube;
 pub mod youtube_storage;

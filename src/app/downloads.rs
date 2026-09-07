@@ -19,9 +19,9 @@ impl App {
             ViewMode::Search => {
                 if let Some(ref results) = self.search_results {
                     match self.search.tab {
-                        SearchTab::Tracks if self.search.selected_track < results.tracks.len() => {
-                            Some(results.tracks[self.search.selected_track].clone())
-                        }
+                        SearchTab::Tracks => results
+                            .selected_track(self.search.service_filter, self.search.selected_track)
+                            .cloned(),
                         _ => None,
                     }
                 } else {

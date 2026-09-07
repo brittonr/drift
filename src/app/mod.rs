@@ -928,10 +928,8 @@ impl App {
             }
             ViewMode::Search => {
                 if let Some(ref results) = self.search_results {
-                    if self.search.tab == crate::ui::SearchTab::Tracks
-                        && self.search.selected_track < results.tracks.len()
-                    {
-                        Some(results.tracks[self.search.selected_track].clone())
+                    if self.search.tab == crate::ui::SearchTab::Tracks {
+                        results.selected_track(self.search.service_filter, self.search.selected_track).cloned()
                     } else {
                         None
                     }
