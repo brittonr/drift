@@ -107,6 +107,7 @@
           drift = driftBuild;
           tidal-db = driftBuild;
           drift-sync = driftBuild;
+          drift-db-upgrade = driftBuild;
         }
       );
 
@@ -134,6 +135,10 @@
           drift-sync = {
             type = "app";
             program = "${driftBuild}/bin/drift-sync";
+          };
+          drift-db-upgrade = {
+            type = "app";
+            program = "${driftBuild}/bin/drift-db-upgrade";
           };
           # Regenerate build plan (requires nightly cargo on PATH)
           update-plan = {

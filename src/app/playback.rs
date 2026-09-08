@@ -315,8 +315,7 @@ impl App {
                     return;
                 }
                 // Pick a random track from the album
-                use rand::Rng;
-                let idx = rand::thread_rng().gen_range(0..album_tracks.len());
+                let idx = rand::random_range(0..album_tracks.len());
                 match self.music_service.get_track_radio(&album_tracks[idx].id, 10).await {
                     Ok(tracks) => tracks,
                     Err(e) => {

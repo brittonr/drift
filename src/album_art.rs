@@ -20,7 +20,7 @@ pub struct AlbumArtCache {
     /// Protocol handler for rendering images
     picker: Option<Picker>,
     /// Current image protocol state (for rendering)
-    current_protocol: Option<Box<dyn StatefulProtocol>>,
+    current_protocol: Option<StatefulProtocol>,
 }
 
 impl AlbumArtCache {
@@ -35,16 +35,8 @@ impl AlbumArtCache {
         std::fs::create_dir_all(&cache_dir)
             .context("Failed to create album art cache directory")?;
 
-        // Try to detect terminal capabilities
-        // Try to get font size from terminal, fallback to default if it fails
-        let mut picker = Picker::from_termios()
-            .ok()
-            .or_else(|| Some(Picker::new((8, 16))));
-
-        // Attempt to detect graphics protocol
-        if let Some(ref mut p) = picker {
-            let _ = p.guess_protocol();
-        }
+        // Query the terminal once; use half-blocks when graphics detection fails.
+        let picker = Some(Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks()));
 
         // Use at least 10 entries to avoid degenerate cache behavior
         let cap = NonZeroUsize::new(capacity.max(10))
@@ -201,7 +193,7 @@ impl AlbumArtCache {
     }
 
     /// Get the current protocol for rendering
-    pub fn get_protocol_mut(&mut self) -> Option<&mut Box<dyn StatefulProtocol>> {
+    pub fn get_protocol_mut(&mut self) -> Option<&mut StatefulProtocol> {
         self.current_protocol.as_mut()
     }
 

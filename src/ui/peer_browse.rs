@@ -39,8 +39,7 @@ pub fn render_peer_browse_view(
                 Constraint::Percentage(20),
                 Constraint::Percentage(30),
                 Constraint::Percentage(50),
-            ]
-            .as_ref(),
+            ],
         )
         .split(area);
 

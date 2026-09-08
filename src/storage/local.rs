@@ -15,7 +15,7 @@ use crate::search::SearchHistory;
 use crate::search_cache::SearchCache;
 use crate::service::{SearchResults, ServiceType, Track};
 
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 /// Redb table for synced playlists: key = playlist_id, value = JSON bytes.
 const PLAYLISTS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("playlists");

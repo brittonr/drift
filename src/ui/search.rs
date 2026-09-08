@@ -417,7 +417,7 @@ pub fn render_search_preview(
         if state.album_art_cache.has_cover_cached(cover, 320) {
             let _ = state.album_art_cache.set_current_from_cover(cover, 320);
             if let Some(protocol) = state.album_art_cache.get_protocol_mut() {
-                let image_widget = StatefulImage::new(None);
+                let image_widget = StatefulImage::default();
                 f.render_stateful_widget(image_widget, art_area, protocol);
                 true
             } else {

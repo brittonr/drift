@@ -31,23 +31,25 @@ async-trait = "0.1"
 dirs = "7"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.23"
-which = "6"
+which = "8"
 
 # Album art display
 image = "0.25"
-ratatui-image = { version = "1.0", features = ["serde"] }
+ratatui-image = { version = "11", default-features = false, features = ["serde", "image-defaults", "crossterm"] }
 
 # Logging
 tracing = "0.1"
 
 # Configuration
-toml = "0.8"
+toml = "1.1"
 
 # Random number generation (for album radio track selection)
-rand = "0.8"
+rand = "0.10"
 
 # Embedded key-value store for tidal-dl download history
-redb = "2"
+redb = "4"
+# Offline migration bridge for existing v2 database files; not used by normal storage.
+redb-legacy = { package = "redb", version = "=2.6.3" }
 
 # Content-addressed hashing (for sync download dedup)
 blake3 = "1"
@@ -93,3 +95,7 @@ path = "src/bin/tidal_db.rs"
 [[bin]]
 name = "drift-sync"
 path = "src/bin/sync.rs"
+
+[[bin]]
+name = "drift-db-upgrade"
+path = "src/bin/db_upgrade.rs"

@@ -74,7 +74,7 @@ pub fn render_now_playing(
 
                 if let Some(protocol) = state.album_art_cache.get_protocol_mut() {
                     use ratatui_image::StatefulImage;
-                    let image_widget = StatefulImage::new(None);
+                    let image_widget = StatefulImage::default();
                     f.render_stateful_widget(image_widget, art_area, protocol);
                     true
                 } else {

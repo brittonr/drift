@@ -69,7 +69,7 @@ pub fn render_library_view(
 ) -> Rect {
     let library_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
+        .constraints([Constraint::Length(3), Constraint::Min(1)])
         .split(area);
 
     // Tab bar

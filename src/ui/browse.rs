@@ -29,7 +29,7 @@ pub fn render_browse_view(
 ) -> (Rect, Rect) {
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)].as_ref())
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
         .split(area);
 
     let left_area = content_chunks[0];

@@ -31,6 +31,8 @@ Drift keeps playback state locally. Optional cross-device sync uses S3-compatibl
 
 ## Installation
 
+Existing installations: redb 4 requires conversion of older database files. Follow [the offline database upgrade procedure](docs/database-upgrade.md) before the first run. The procedure preserves the original files for rollback.
+
 ```sh
 # Nix (recommended)
 nix run .#drift

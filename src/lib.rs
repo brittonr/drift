@@ -7,6 +7,7 @@ pub mod album_art;
 pub mod app;
 pub mod cava;
 pub mod config;
+pub mod database_upgrade;
 pub mod download_db;
 pub mod downloads;
 pub mod handlers;

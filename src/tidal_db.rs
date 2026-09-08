@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::{Deserialize, Serialize};
 
 pub const TRACKS: TableDefinition<&str, &[u8]> = TableDefinition::new("tracks");
