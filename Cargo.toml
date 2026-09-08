@@ -15,7 +15,7 @@ metaflac = "0.2"
 
 # TUI framework
 ratatui = "0.30"
-crossterm = "0.28"
+crossterm = "0.29"
 
 # Shared TUI widgets (scrollable list, tab bar, progress bar, text input, dialogs)
 rat-widgets = { git = "ssh://git@github.com/brittonr/subwayrat.git", rev = "2e52b3150819a2365aaefd3dcf8bbd2a2fa2e901" }
@@ -27,9 +27,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 async-trait = "0.1"
-dirs = "5"
+dirs = "7"
 chrono = { version = "0.4", features = ["serde"] }
-base64 = "0.21"
+base64 = "0.23"
 which = "6"
 
 # Album art display
@@ -52,14 +52,14 @@ redb = "2"
 blake3 = "1"
 
 # HTML scraping (for Bandcamp search)
-scraper = "0.20"
+scraper = "0.27"
 urlencoding = "2"
 
 # Fuzzy matching for search (used by helix-editor, ~6x faster than skim)
 nucleo = "0.5"
 
 # LRU cache for bounded memory usage
-lru = "0.12"
+lru = "0.18"
 
 # Hostname detection (for Aspen user ID)
 hostname = "0.4"
