@@ -76,12 +76,27 @@ pub struct TidalClient {
     pub config: Option<TidalConfig>,
     http_client: HttpClient,
     audio_quality: String,
+    broker_socket: Option<std::path::PathBuf>,
+    legacy_guard: Option<crate::tidal_auth::CredentialGuard>,
 }
 
 impl TidalClient {
     pub async fn new() -> Result<Self> {
-        let root = config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
-        let config = credentials::load(&root)?;
+        Self::new_for_socket(crate::tidal_auth::configured_socket()?).await
+    }
+
+    pub(crate) async fn new_for_socket(broker_socket: Option<std::path::PathBuf>) -> Result<Self> {
+        let mut legacy_guard = None;
+        let config = if let Some(socket) = &broker_socket {
+            let access =
+                crate::tidal_auth::request(socket.clone(), crate::tidal_auth::core::Request::Get)
+                    .await?;
+            Some(Self::broker_config(access))
+        } else {
+            let root = config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
+            legacy_guard = Some(crate::tidal_auth::CredentialGuard::for_config_root(&root)?);
+            credentials::load(&root)?
+        };
         if config.is_none() {
             println!("No Tidal credentials found. Running in demo mode.");
         }
@@ -92,11 +107,30 @@ impl TidalClient {
             config,
             http_client,
             audio_quality: "HIGH".to_string(),
+            broker_socket,
+            legacy_guard,
         })
     }
 
+    fn broker_config(access: crate::tidal_auth::core::Access) -> TidalConfig {
+        TidalConfig {
+            access_token: access.access_token,
+            refresh_token: String::new(),
+            token_type: "Bearer".into(),
+            user_id: access.user_id,
+            expires_at: access.expires_at,
+        }
+    }
+
     pub async fn save_config(&self) -> Result<()> {
+        if self.broker_socket.is_some() {
+            return Err(anyhow!("broker_owns_credentials"));
+        }
         if let Some(ref config) = self.config {
+            self.legacy_guard
+                .as_ref()
+                .ok_or_else(|| anyhow!("credential_lock_missing"))?
+                .check()?;
             let root = config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
             credentials::save(&root, config)?;
         }
@@ -183,7 +217,28 @@ impl TidalClient {
     }
 
     async fn refresh_token(&mut self) -> Result<()> {
+        if let Some(socket) = &self.broker_socket {
+            let rejected_access_token = self
+                .config
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing_broker_access"))?
+                .access_token
+                .clone();
+            let access = crate::tidal_auth::request(
+                socket.clone(),
+                crate::tidal_auth::core::Request::Refresh {
+                    rejected_access_token,
+                },
+            )
+            .await?;
+            self.config = Some(Self::broker_config(access));
+            return Ok(());
+        }
         if let Some(ref mut config) = self.config {
+            self.legacy_guard
+                .as_ref()
+                .ok_or_else(|| anyhow!("credential_lock_missing"))?
+                .check()?;
             let refresh_token = config.refresh_token.clone();
             let url = "https://auth.tidal.com/v1/oauth2/token";
 
@@ -314,12 +369,20 @@ impl TidalClient {
     }
 
     #[allow(dead_code)]
-    pub async fn get_track_radio_by_id(&mut self, track_id: u64, limit: usize) -> Result<Vec<Track>> {
+    pub async fn get_track_radio_by_id(
+        &mut self,
+        track_id: u64,
+        limit: usize,
+    ) -> Result<Vec<Track>> {
         self.get_track_radio(&track_id.to_string(), limit).await
     }
 
     #[allow(dead_code)]
-    pub async fn get_artist_radio_by_id(&mut self, artist_id: u64, limit: usize) -> Result<Vec<Track>> {
+    pub async fn get_artist_radio_by_id(
+        &mut self,
+        artist_id: u64,
+        limit: usize,
+    ) -> Result<Vec<Track>> {
         self.get_artist_radio(&artist_id.to_string(), limit).await
     }
 
@@ -334,7 +397,11 @@ impl TidalClient {
     }
 
     #[allow(dead_code)]
-    pub async fn add_tracks_to_playlist_by_ids(&mut self, playlist_id: &str, track_ids: &[u64]) -> Result<()> {
+    pub async fn add_tracks_to_playlist_by_ids(
+        &mut self,
+        playlist_id: &str,
+        track_ids: &[u64],
+    ) -> Result<()> {
         let string_ids: Vec<String> = track_ids.iter().map(|id| id.to_string()).collect();
         self.add_tracks_to_playlist(playlist_id, &string_ids).await
     }
@@ -370,10 +437,7 @@ impl MusicService for TidalClient {
                     break;
                 };
 
-                let url = format!(
-                    "https://api.tidal.com/v1/tracks/{}/playbackinfo",
-                    track_id
-                );
+                let url = format!("https://api.tidal.com/v1/tracks/{}/playbackinfo", track_id);
 
                 let response = self
                     .http_client
@@ -436,10 +500,8 @@ impl MusicService for TidalClient {
                         }
 
                         if status.as_u16() == 401 || status.as_u16() == 403 {
-                            let stream_url = format!(
-                                "https://api.tidal.com/v1/tracks/{}/streamUrl",
-                                track_id
-                            );
+                            let stream_url =
+                                format!("https://api.tidal.com/v1/tracks/{}/streamUrl", track_id);
 
                             let stream_response = self
                                 .http_client
@@ -536,10 +598,7 @@ impl MusicService for TidalClient {
         if !playlist_id.starts_with("demo-") {
             for attempt in 0..2 {
                 if let Some(ref config) = self.config {
-                    let url = format!(
-                        "https://api.tidal.com/v1/playlists/{}/items",
-                        playlist_id
-                    );
+                    let url = format!("https://api.tidal.com/v1/playlists/{}/items", playlist_id);
 
                     let response = self
                         .http_client
@@ -637,15 +696,15 @@ impl MusicService for TidalClient {
                     Ok(resp) if resp.status().is_success() => {
                         let json: Value = resp.json().await?;
 
-                        let tracks = if let Some(items) = json.get("items").and_then(|i| i.as_array())
-                        {
-                            items
-                                .iter()
-                                .filter_map(Self::parse_track_from_nested)
-                                .collect()
-                        } else {
-                            vec![]
-                        };
+                        let tracks =
+                            if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                                items
+                                    .iter()
+                                    .filter_map(Self::parse_track_from_nested)
+                                    .collect()
+                            } else {
+                                vec![]
+                            };
 
                         return Ok(tracks);
                     }
@@ -699,8 +758,7 @@ impl MusicService for TidalClient {
                                         let album_data = item.get("item")?;
 
                                         let id = album_data.get("id")?.as_u64()?.to_string();
-                                        let title =
-                                            album_data.get("title")?.as_str()?.to_string();
+                                        let title = album_data.get("title")?.as_str()?.to_string();
                                         let artist = album_data
                                             .get("artist")
                                             .and_then(|a| a.get("name"))
@@ -784,8 +842,7 @@ impl MusicService for TidalClient {
                                         let artist_data = item.get("item")?;
 
                                         let id = artist_data.get("id")?.as_u64()?.to_string();
-                                        let name =
-                                            artist_data.get("name")?.as_str()?.to_string();
+                                        let name = artist_data.get("name")?.as_str()?.to_string();
 
                                         Some(Artist {
                                             id,
@@ -1150,10 +1207,7 @@ impl MusicService for TidalClient {
     async fn get_artist_top_tracks(&mut self, artist_id: &str) -> Result<Vec<Track>> {
         for attempt in 0..2 {
             if let Some(ref config) = self.config {
-                let url = format!(
-                    "https://api.tidal.com/v1/artists/{}/toptracks",
-                    artist_id
-                );
+                let url = format!("https://api.tidal.com/v1/artists/{}/toptracks", artist_id);
 
                 let response = self
                     .http_client
@@ -1400,10 +1454,7 @@ impl MusicService for TidalClient {
     async fn get_playlist_radio(&mut self, playlist_id: &str, limit: usize) -> Result<Vec<Track>> {
         for attempt in 0..2 {
             if let Some(ref config) = self.config {
-                let url = format!(
-                    "https://api.tidal.com/v1/playlists/{}/radio",
-                    playlist_id
-                );
+                let url = format!("https://api.tidal.com/v1/playlists/{}/radio", playlist_id);
 
                 let response = self
                     .http_client
@@ -1454,20 +1505,14 @@ impl MusicService for TidalClient {
         Ok(vec![])
     }
 
-    async fn create_playlist(
-        &mut self,
-        name: &str,
-        description: Option<&str>,
-    ) -> Result<Playlist> {
+    async fn create_playlist(&mut self, name: &str, description: Option<&str>) -> Result<Playlist> {
         for attempt in 0..2 {
             if let Some(ref config) = self.config {
                 let url =
                     "https://api.tidal.com/v2/my-collection/playlists/folders/create-playlist";
 
-                let mut query_params = vec![
-                    ("name", name.to_string()),
-                    ("folderId", "root".to_string()),
-                ];
+                let mut query_params =
+                    vec![("name", name.to_string()), ("folderId", "root".to_string())];
                 if let Some(desc) = description {
                     query_params.push(("description", desc.to_string()));
                 }
@@ -1487,8 +1532,9 @@ impl MusicService for TidalClient {
                     Ok(resp) if resp.status().is_success() => {
                         let json: Value = resp.json().await?;
 
-                        let data =
-                            json.get("data").ok_or_else(|| anyhow!("Missing data field"))?;
+                        let data = json
+                            .get("data")
+                            .ok_or_else(|| anyhow!("Missing data field"))?;
 
                         let uuid = data
                             .get("uuid")
@@ -1528,11 +1574,7 @@ impl MusicService for TidalClient {
                     Ok(resp) => {
                         let status = resp.status();
                         let body = resp.text().await.unwrap_or_default();
-                        return Err(anyhow!(
-                            "Failed to create playlist: {} - {}",
-                            status,
-                            body
-                        ));
+                        return Err(anyhow!("Failed to create playlist: {} - {}", status, body));
                     }
                     Err(e) => {
                         return Err(anyhow!("Network error creating playlist: {}", e));
@@ -1579,9 +1621,7 @@ impl MusicService for TidalClient {
                     .await;
 
                 match response {
-                    Ok(resp)
-                        if resp.status().is_success() || resp.status().as_u16() == 200 =>
-                    {
+                    Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 => {
                         return Ok(());
                     }
                     Ok(resp) if resp.status().as_u16() == 401 && attempt == 0 => {
@@ -1592,11 +1632,7 @@ impl MusicService for TidalClient {
                     Ok(resp) => {
                         let status = resp.status();
                         let body = resp.text().await.unwrap_or_default();
-                        return Err(anyhow!(
-                            "Failed to update playlist: {} - {}",
-                            status,
-                            body
-                        ));
+                        return Err(anyhow!("Failed to update playlist: {} - {}", status, body));
                     }
                     Err(e) => {
                         return Err(anyhow!("Network error updating playlist: {}", e));
@@ -1640,11 +1676,7 @@ impl MusicService for TidalClient {
                     Ok(resp) => {
                         let status = resp.status();
                         let body = resp.text().await.unwrap_or_default();
-                        return Err(anyhow!(
-                            "Failed to delete playlist: {} - {}",
-                            status,
-                            body
-                        ));
+                        return Err(anyhow!("Failed to delete playlist: {} - {}", status, body));
                     }
                     Err(e) => {
                         return Err(anyhow!("Network error deleting playlist: {}", e));
@@ -1668,10 +1700,7 @@ impl MusicService for TidalClient {
 
         for attempt in 0..2 {
             if let Some(ref config) = self.config {
-                let url = format!(
-                    "https://api.tidal.com/v1/playlists/{}/items",
-                    playlist_id
-                );
+                let url = format!("https://api.tidal.com/v1/playlists/{}/items", playlist_id);
 
                 let track_ids_str = track_ids.join(",");
 

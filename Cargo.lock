@@ -724,6 +724,7 @@ dependencies = [
  "hostname",
  "id3",
  "image",
+ "libc",
  "lru 0.12.5",
  "metaflac",
  "nucleo",

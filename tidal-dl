@@ -209,6 +209,8 @@ def hash_file(path: Path) -> str:
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def load_creds():
+    if os.environ.get("DRIFT_TIDAL_AUTH_SOCKET") is not None:
+        raise SystemExit("Shared authorization requires drift-sync; tidal-dl cannot own its refresh token.")
     global creds
     if not CREDS_PATH.exists():
         print(f"✗ No credentials found at {CREDS_PATH}")

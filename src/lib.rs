@@ -18,6 +18,7 @@ pub mod search_cache;
 pub mod service;
 pub mod storage;
 pub mod sync;
+pub mod tidal_auth;
 pub mod tidal_db;
 pub mod ui;
 pub mod video;

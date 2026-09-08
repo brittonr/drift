@@ -258,6 +258,9 @@ Downloads all favorite albums, tracks, and playlists at HI_RES_LOSSLESS quality 
 
 Credentials are loaded from `~/.config/drift/credentials.json` or `~/.config/tidal-tui/credentials.json`.
 
+The optional [shared Tidal authorization broker](docs/tidal-authorization.md) renews tokens for the TUI and `drift-sync` without giving them a refresh token.
+It also exposes an access-only command for a restricted SearXNG connection. Deployment is not yet enabled.
+
 ## Development
 
 ```sh

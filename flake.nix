@@ -44,6 +44,12 @@
         };
     in
     {
+      nixosModules.tidal-auth =
+        { pkgs, ... }@args:
+        import ./nix/tidal-auth.nix {
+          driftPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.drift-tidal-auth;
+        } args;
+
       devShells = forAllSystems (
         system:
         let
@@ -107,6 +113,7 @@
           drift = driftBuild;
           tidal-db = driftBuild;
           drift-sync = driftBuild;
+          drift-tidal-auth = driftBuild;
         }
       );
 
@@ -134,6 +141,10 @@
           drift-sync = {
             type = "app";
             program = "${driftBuild}/bin/drift-sync";
+          };
+          drift-tidal-auth = {
+            type = "app";
+            program = "${driftBuild}/bin/drift-tidal-auth";
           };
           # Regenerate build plan (requires nightly cargo on PATH)
           update-plan = {
@@ -167,7 +178,13 @@
                 touch "$out"
               '';
         }
-        // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          tidal-auth-module =
+            assert import ./nix/tidal-auth-tests.nix {
+              inherit pkgs;
+              driftPackage = self.packages.${system}.drift-tidal-auth;
+            };
+            pkgs.runCommand "tidal-auth-module" { } "touch $out";
           mpd-integration = import ./tests/nixos/mpd-integration.nix {
             inherit pkgs;
             drift = self.packages.${system}.default;

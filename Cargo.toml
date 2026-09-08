@@ -73,6 +73,9 @@ object_store = { version = "0.12", features = ["aws"], optional = true }
 # Atomic, owner-only credential replacement.
 tempfile = "3"
 
+# Unix ownership and no-follow file opens for the authorization broker.
+libc = "0.2"
+
 [features]
 default = ["s3"]
 s3 = ["dep:object_store"]
@@ -92,3 +95,7 @@ path = "src/bin/tidal_db.rs"
 [[bin]]
 name = "drift-sync"
 path = "src/bin/sync.rs"
+
+[[bin]]
+name = "drift-tidal-auth"
+path = "src/bin/tidal_auth.rs"

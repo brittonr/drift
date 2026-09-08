@@ -1,19 +1,20 @@
-mod mpd;
-mod cava;
 mod album_art;
-mod queue_persistence;
-mod download_db;
-mod history_db;
-mod downloads;
+mod cava;
 mod config;
+mod download_db;
+mod downloads;
+mod history_db;
+mod mpd;
+mod queue_persistence;
 mod service;
+use drift::tidal_auth;
+mod app;
+mod handlers;
 mod search;
 mod search_cache;
 mod storage;
 mod tidal_db;
-mod app;
 mod ui;
-mod handlers;
 mod video;
 
 use anyhow::Result;
@@ -35,10 +36,10 @@ use app::{App, ViewMode};
 use handlers::{handle_key_event, KeyAction};
 use service::MusicService;
 use ui::{
-    render_now_playing, render_queue, render_browse_view,
-    render_search_view, render_search_preview, render_downloads_view, render_library_view, render_status_bar,
-    render_artist_detail_view, render_album_detail_view, render_help_panel, HelpPanelState,
-    render_dialog, DialogRenderState, SearchPreviewState,
+    render_album_detail_view, render_artist_detail_view, render_browse_view, render_dialog,
+    render_downloads_view, render_help_panel, render_library_view, render_now_playing,
+    render_queue, render_search_preview, render_search_view, render_status_bar, DialogRenderState,
+    HelpPanelState, SearchPreviewState,
 };
 
 #[tokio::main]
@@ -137,12 +138,10 @@ where
                         app.handle_mouse_click(mouse.column, mouse.row).await;
                     }
                 }
-                Event::Key(key) => {
-                    match handle_key_event(app, key).await {
-                        KeyAction::Quit => return Ok(()),
-                        KeyAction::Continue => {}
-                    }
-                }
+                Event::Key(key) => match handle_key_event(app, key).await {
+                    KeyAction::Quit => return Ok(()),
+                    KeyAction::Continue => {}
+                },
                 _ => {}
             }
         }
@@ -155,23 +154,23 @@ fn render_ui(f: &mut Frame, app: &mut App) {
 
     // Now Playing height: taller when visualizer is enabled
     let now_playing_height = if app.show_visualizer && app.visualizer.is_some() {
-        14  // Extra space for visualizer
+        14 // Extra space for visualizer
     } else {
         9
     };
 
     let mut constraints = vec![
-        Constraint::Length(3),            // Header
-        Constraint::Length(now_playing_height),  // Now Playing (with optional visualizer)
+        Constraint::Length(3),                  // Header
+        Constraint::Length(now_playing_height), // Now Playing (with optional visualizer)
     ];
 
     if app.show_debug {
-        constraints.push(Constraint::Percentage(50));  // Main content
-        constraints.push(Constraint::Percentage(25));  // Debug panel
+        constraints.push(Constraint::Percentage(50)); // Main content
+        constraints.push(Constraint::Percentage(25)); // Debug panel
     } else {
-        constraints.push(Constraint::Min(10));  // Main content takes all remaining space
+        constraints.push(Constraint::Min(10)); // Main content takes all remaining space
     }
-    constraints.push(Constraint::Length(3));       // Status bar
+    constraints.push(Constraint::Length(3)); // Status bar
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -199,7 +198,11 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         }
     );
     let header = Paragraph::new(header_text)
-        .style(Style::default().fg(theme.primary()).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(theme.primary())
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(
             Block::default()
@@ -221,10 +224,19 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         radio_seed: app.playback.radio_seed.clone(),
         local_queue_len: app.local_queue.len(),
         album_art_cache: &mut app.album_art_cache,
-        visualizer: if app.show_visualizer { app.visualizer.as_ref() } else { None },
+        visualizer: if app.show_visualizer {
+            app.visualizer.as_ref()
+        } else {
+            None
+        },
         video_mode: app.playback.video_mode,
     };
-    let progress_bar_area = render_now_playing(f, &mut { now_playing_state }, main_chunks[chunk_index], &theme);
+    let progress_bar_area = render_now_playing(
+        f,
+        &mut { now_playing_state },
+        main_chunks[chunk_index],
+        &theme,
+    );
     app.clickable_areas.progress_bar = progress_bar_area;
     chunk_index += 1;
 
@@ -234,10 +246,7 @@ fn render_ui(f: &mut Frame, app: &mut App) {
     if app.playback.show_queue {
         let content_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(60),
-                Constraint::Percentage(40),
-            ])
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(content_area);
 
         render_main_content(f, app, content_chunks[0], &theme);
@@ -259,7 +268,8 @@ fn render_ui(f: &mut Frame, app: &mut App) {
 
     // Debug panel (only shown when enabled)
     if app.show_debug {
-        let debug_text: String = app.debug_log
+        let debug_text: String = app
+            .debug_log
             .iter()
             .rev()
             .take(10)
@@ -286,7 +296,10 @@ fn render_ui(f: &mut Frame, app: &mut App) {
         is_searching: app.search.is_active,
         space_pressed: app.key_state.space_pressed,
         pending_key: app.key_state.pending_key,
-        status_message: app.status_message.as_ref().map(|m| (m.message.clone(), m.is_error)),
+        status_message: app
+            .status_message
+            .as_ref()
+            .map(|m| (m.message.clone(), m.is_error)),
         backend_name: Some(app.storage.backend_name().to_string()),
     };
     render_status_bar(f, &status_state, main_chunks[chunk_index], &theme);
@@ -311,7 +324,12 @@ fn render_ui(f: &mut Frame, app: &mut App) {
     }
 }
 
-fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect, theme: &ui::Theme) {
+fn render_main_content(
+    f: &mut Frame,
+    app: &mut App,
+    area: ratatui::layout::Rect,
+    theme: &ui::Theme,
+) {
     let current_track_id = app.current_track.as_ref().map(|t| t.id.as_str());
 
     match app.view_mode {
@@ -327,12 +345,8 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
                     active_panel: app.peer_browse.active_panel,
                     current_track_id,
                 };
-                let (left, right) = ui::peer_browse::render_peer_browse_view(
-                    f,
-                    &peer_state,
-                    area,
-                    theme,
-                );
+                let (left, right) =
+                    ui::peer_browse::render_peer_browse_view(f, &peer_state, area, theme);
                 app.clickable_areas.left_list = Some(left);
                 app.clickable_areas.right_list = Some(right);
             } else {
@@ -408,7 +422,8 @@ fn render_main_content(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect
         ViewMode::Downloads => {
             let (pending, completed, failed) = app.downloads.download_counts;
 
-            let is_paused = app.download_manager
+            let is_paused = app
+                .download_manager
                 .as_ref()
                 .map(|dm| dm.is_paused())
                 .unwrap_or(false);

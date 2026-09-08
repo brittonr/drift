@@ -103,6 +103,8 @@ pub struct SyncApiClient {
     http: Client,
     config: TidalCreds,
     creds_path: PathBuf,
+    broker_socket: Option<PathBuf>,
+    legacy_guard: Option<crate::tidal_auth::CredentialGuard>,
 }
 
 impl SyncApiClient {
@@ -111,18 +113,41 @@ impl SyncApiClient {
             http: Client::new(),
             config,
             creds_path,
+            broker_socket: None,
+            legacy_guard: None,
         }
     }
 
     /// Load credentials from disk. Tries drift path first, then tidal-tui.
     pub fn load() -> Result<Self> {
+        Self::load_for_socket(crate::tidal_auth::configured_socket()?)
+    }
+
+    pub(crate) fn load_for_socket(broker_socket: Option<PathBuf>) -> Result<Self> {
+        if let Some(socket) = broker_socket {
+            let access = crate::tidal_auth::blocking_request(
+                &socket,
+                &crate::tidal_auth::core::Request::Get,
+            )?;
+            return Ok(Self {
+                http: Client::new(),
+                config: Self::broker_config(access),
+                creds_path: PathBuf::new(),
+                broker_socket: Some(socket),
+                legacy_guard: None,
+            });
+        }
+        let root =
+            dirs::config_dir().ok_or_else(|| anyhow!("configuration_directory_unavailable"))?;
+        let guard = crate::tidal_auth::CredentialGuard::for_config_root(&root)?;
         let (config, path) = Self::find_and_load_creds()?;
-        Ok(Self::new(config, path))
+        let mut client = Self::new(config, path);
+        client.legacy_guard = Some(guard);
+        Ok(client)
     }
 
     fn find_and_load_creds() -> Result<(TidalCreds, PathBuf)> {
-        let config_dir =
-            dirs::config_dir().context("Could not determine config directory")?;
+        let config_dir = dirs::config_dir().context("Could not determine config directory")?;
 
         // Try drift path first
         let drift_path = config_dir.join("drift").join("credentials.json");
@@ -155,7 +180,24 @@ impl SyncApiClient {
             .with_context(|| format!("Failed to parse credentials from {}", path.display()))
     }
 
+    fn broker_config(access: crate::tidal_auth::core::Access) -> TidalCreds {
+        TidalCreds {
+            access_token: access.access_token,
+            refresh_token: String::new(),
+            token_type: "Bearer".into(),
+            user_id: access.user_id,
+            expires_at: access.expires_at,
+        }
+    }
+
     fn save_creds(&self) -> Result<()> {
+        if self.broker_socket.is_some() {
+            return Err(anyhow!("broker_owns_credentials"));
+        }
+        self.legacy_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("credential_lock_missing"))?
+            .check()?;
         let contents = serde_json::to_string_pretty(&self.config)?;
         std::fs::write(&self.creds_path, contents)?;
         Ok(())
@@ -167,6 +209,28 @@ impl SyncApiClient {
 
     /// Refresh the access token and save to disk.
     pub async fn refresh_token(&mut self) -> Result<()> {
+        if let Some(socket) = &self.broker_socket {
+            let access = crate::tidal_auth::request(
+                socket.clone(),
+                crate::tidal_auth::core::Request::Refresh {
+                    rejected_access_token: self.config.access_token.clone(),
+                },
+            )
+            .await?;
+            self.config = Self::broker_config(access);
+            return Ok(());
+        }
+        if self.legacy_guard.is_none() {
+            let directory = self
+                .creds_path
+                .parent()
+                .ok_or_else(|| anyhow!("invalid_credentials_path"))?;
+            self.legacy_guard = Some(crate::tidal_auth::CredentialGuard::acquire(directory)?);
+        }
+        self.legacy_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("credential_lock_missing"))?
+            .check()?;
         println!("  ↻ Refreshing access token...");
         let resp = self
             .http
@@ -208,11 +272,7 @@ impl SyncApiClient {
 
     /// Authenticated GET with retry on 401 (refresh), 429 (rate limit),
     /// 5xx (server error), and network timeouts.
-    async fn api_get(
-        &mut self,
-        path: &str,
-        params: &[(&str, &str)],
-    ) -> Result<Value, ApiError> {
+    async fn api_get(&mut self, path: &str, params: &[(&str, &str)]) -> Result<Value, ApiError> {
         let url = if path.starts_with("http") {
             path.to_string()
         } else {
@@ -244,10 +304,7 @@ impl SyncApiClient {
                 Err(e) => {
                     if attempt < RETRY_ATTEMPTS {
                         let wait = RETRY_BACKOFF_SECS[attempt];
-                        eprintln!(
-                            "  ⏳ Request error on {} — retrying in {}s",
-                            path, wait
-                        );
+                        eprintln!("  ⏳ Request error on {} — retrying in {}s", path, wait);
                         sleep(Duration::from_secs(wait)).await;
                         continue;
                     }
@@ -276,9 +333,7 @@ impl SyncApiClient {
                     .get("Retry-After")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(
-                        RETRY_BACKOFF_SECS[attempt.min(RETRY_BACKOFF_SECS.len() - 1)],
-                    );
+                    .unwrap_or(RETRY_BACKOFF_SECS[attempt.min(RETRY_BACKOFF_SECS.len() - 1)]);
                 let wait = raw_wait.min(MAX_RETRY_AFTER_SECS);
                 println!(
                     "  ⏳ Rate limited — waiting {}s ({}/{})",
@@ -306,10 +361,7 @@ impl SyncApiClient {
                     sleep(Duration::from_secs(wait)).await;
                     continue;
                 }
-                return Err(ApiError::ServerError(format!(
-                    "{} on {}",
-                    status, path
-                )));
+                return Err(ApiError::ServerError(format!("{} on {}", status, path)));
             }
 
             if !status.is_success() {
@@ -451,11 +503,7 @@ impl SyncApiClient {
         items
             .iter()
             .filter_map(|p| {
-                let id = p
-                    .get("uuid")
-                    .or_else(|| p.get("id"))?
-                    .as_str()?
-                    .to_string();
+                let id = p.get("uuid").or_else(|| p.get("id"))?.as_str()?.to_string();
                 let title = p.get("title")?.as_str()?.to_string();
                 let num_tracks = p
                     .get("numberOfTracks")
@@ -493,10 +541,7 @@ impl SyncApiClient {
     /// Get the stream URL for a track at the highest available quality.
     /// Tries HI_RES_LOSSLESS → HI_RES → LOSSLESS → HIGH.
     /// Returns (url, codec) on success.
-    pub async fn get_stream_url(
-        &mut self,
-        track_id: &str,
-    ) -> Result<(String, String), ApiError> {
+    pub async fn get_stream_url(&mut self, track_id: &str) -> Result<(String, String), ApiError> {
         for attempt in 0..=RETRY_ATTEMPTS {
             for quality in QUALITY_CASCADE {
                 let path = format!("tracks/{}/playbackinfo", track_id);
@@ -515,12 +560,8 @@ impl SyncApiClient {
                             .to_string();
 
                         // Try manifest (base64-encoded JSON or DASH XML)
-                        if let Some(manifest_b64) =
-                            data.get("manifest").and_then(|v| v.as_str())
-                        {
-                            if let Ok(decoded) =
-                                general_purpose::STANDARD.decode(manifest_b64)
-                            {
+                        if let Some(manifest_b64) = data.get("manifest").and_then(|v| v.as_str()) {
+                            if let Ok(decoded) = general_purpose::STANDARD.decode(manifest_b64) {
                                 if let Ok(manifest_str) = String::from_utf8(decoded) {
                                     let manifest_mime = data
                                         .get("manifestMimeType")
@@ -528,9 +569,7 @@ impl SyncApiClient {
                                         .unwrap_or("");
 
                                     if manifest_mime.contains("dash+xml") {
-                                        if let Some(url) =
-                                            extract_dash_url(&manifest_str)
-                                        {
+                                        if let Some(url) = extract_dash_url(&manifest_str) {
                                             return Ok((url, codec));
                                         }
                                     } else if let Ok(mj) =
@@ -693,7 +732,7 @@ mod tests {
     </AdaptationSet>
   </Period>
 </MPD>"#;
-        
+
         let url = extract_dash_url(manifest);
         assert_eq!(url, Some("https://example.com/track.flac".to_string()));
     }
@@ -714,7 +753,8 @@ mod tests {
 
     #[test]
     fn test_extract_dash_url_with_special_chars() {
-        let manifest = r#"<BaseURL>https://example.com/track?token=abc123&amp;format=flac</BaseURL>"#;
+        let manifest =
+            r#"<BaseURL>https://example.com/track?token=abc123&amp;format=flac</BaseURL>"#;
         let url = extract_dash_url(manifest);
         assert_eq!(
             url,
@@ -855,7 +895,7 @@ mod tests {
     fn test_load_creds_from_valid_file() {
         let temp_dir = TempDir::new().unwrap();
         let creds_path = temp_dir.path().join("credentials.json");
-        
+
         let creds = TidalCreds {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
@@ -863,10 +903,10 @@ mod tests {
             user_id: 54321,
             expires_at: None,
         };
-        
+
         let json = serde_json::to_string_pretty(&creds).unwrap();
         fs::write(&creds_path, json).unwrap();
-        
+
         let loaded = SyncApiClient::load_creds_from(&creds_path).unwrap();
         assert_eq!(loaded.access_token, "test_access");
         assert_eq!(loaded.refresh_token, "test_refresh");
@@ -885,7 +925,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let creds_path = temp_dir.path().join("bad.json");
         fs::write(&creds_path, "{ invalid json }").unwrap();
-        
+
         let result = SyncApiClient::load_creds_from(&creds_path);
         assert!(result.is_err());
     }
@@ -894,10 +934,10 @@ mod tests {
     fn test_api_error_display() {
         let forbidden = ApiError::Forbidden("Track not available".to_string());
         assert!(forbidden.to_string().contains("Forbidden"));
-        
+
         let server = ApiError::ServerError("500 Internal Server Error".to_string());
         assert!(server.to_string().contains("Server error"));
-        
+
         let other = ApiError::Other(anyhow!("Generic error"));
         assert!(other.to_string().contains("Generic error"));
     }
@@ -910,7 +950,7 @@ mod tests {
             artist: "Test Artist".to_string(),
             num_tracks: 15,
         };
-        
+
         assert_eq!(album.id, "12345");
         assert_eq!(album.num_tracks, 15);
     }
@@ -927,7 +967,7 @@ mod tests {
             track_number: 5,
             volume_number: 1,
         };
-        
+
         assert_eq!(track.id, "98765");
         assert_eq!(track.track_number, 5);
         assert_eq!(track.volume_number, 1);
@@ -940,7 +980,7 @@ mod tests {
             title: "My Favorites".to_string(),
             num_tracks: 50,
         };
-        
+
         assert_eq!(playlist.id, "playlist-uuid");
         assert_eq!(playlist.num_tracks, 50);
     }
@@ -969,7 +1009,7 @@ mod tests {
             user_id: 99999,
             expires_at: None,
         };
-        
+
         let client = SyncApiClient::new(creds, PathBuf::from("/tmp/test.json"));
         assert_eq!(client.user_id(), 99999);
     }
@@ -983,7 +1023,7 @@ mod tests {
             user_id: 1,
             expires_at: None,
         };
-        
+
         let client = SyncApiClient::new(creds, PathBuf::from("/tmp/test.json"));
         let delay = client.download_delay();
         assert_eq!(delay, DOWNLOAD_DELAY);
