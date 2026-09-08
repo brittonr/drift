@@ -12,7 +12,7 @@ use drift::storage::s3::{bind_blob, S3Storage};
 use drift::storage::settings::S3Config;
 use drift::storage::wal::{ReplicationOp, WalEntry};
 use object_store::aws::{AmazonS3Builder, S3ConditionalPut};
-use object_store::{ObjectStore, PutMode, PutOptions, UpdateVersion};
+use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutOptions, UpdateVersion};
 
 const ACCESS_KEY: &str = "drift-fixture-key";
 const SECRET_KEY: &str = "drift-fixture-secret-not-for-deployment";
@@ -84,6 +84,7 @@ fn celld_command(binary: &Path, root: &Path, endpoint: &str) -> Command {
     command
         .env_clear()
         .current_dir(root)
+        .env("TMPDIR", root)
         .env("AWS_ACCESS_KEY_ID", ACCESS_KEY)
         .env("AWS_SECRET_ACCESS_KEY", SECRET_KEY)
         .env("AWS_REGION", REGION)
@@ -231,6 +232,7 @@ async fn rustfs_and_celld_durability_and_denial() -> Result<()> {
         let output = deploy
             .env_clear()
             .current_dir(root.path())
+            .env("TMPDIR", root.path())
             .env("CELLD_ESBUILD", esbuild)
             .env("AWS_ACCESS_KEY_ID", ACCESS_KEY)
             .env("AWS_SECRET_ACCESS_KEY", SECRET_KEY)

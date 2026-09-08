@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use object_store::aws::{AmazonS3Builder, S3ConditionalPut};
 use object_store::path::Path;
-use object_store::{ClientOptions, ObjectStore, PutMode, PutOptions, RetryConfig, UpdateVersion};
+use object_store::{ClientOptions, ObjectStore, ObjectStoreExt, PutMode, PutOptions, RetryConfig, UpdateVersion};
 use reqwest::{header, StatusCode};
 
 use super::object_port::{BlobPort, MetadataPort, MetadataRead};
